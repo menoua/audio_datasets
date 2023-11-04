@@ -1,4 +1,5 @@
 import re
+from typing import Optional
 
 import pandas as pd
 from syllabify import syllabify
@@ -6,7 +7,7 @@ from syllabify import syllabify
 from . import ROOT_VOCAB_DIR
 
 
-def ELP(basepath=ROOT_VOCAB_DIR + "/ELP"):
+def ELP(basepath: str = ROOT_VOCAB_DIR + "/ELP"):
     table = pd.read_csv(
         basepath + "/ELP_Items.csv",
         usecols=["Word", "Freq_HAL"],
@@ -17,7 +18,7 @@ def ELP(basepath=ROOT_VOCAB_DIR + "/ELP"):
     return list(words)
 
 
-def SubtlexUS(basepath=ROOT_VOCAB_DIR + "/OpenLexicon"):
+def SubtlexUS(basepath: str = ROOT_VOCAB_DIR + "/OpenLexicon"):
     table = pd.read_excel(
         basepath + "/Lexique-SubtlexUS.xlsx", usecols=["Word", "SUBTLWF"]
     )
@@ -25,7 +26,7 @@ def SubtlexUS(basepath=ROOT_VOCAB_DIR + "/OpenLexicon"):
     return list(words)
 
 
-def WorldLex(basepath=ROOT_VOCAB_DIR + "/OpenLexicon"):
+def WorldLex(basepath: str = ROOT_VOCAB_DIR + "/OpenLexicon"):
     table = pd.read_excel(
         basepath + "/Lexique-WorldLex.xlsx", usecols=["Word", "NewsFreq"]
     )
@@ -33,14 +34,14 @@ def WorldLex(basepath=ROOT_VOCAB_DIR + "/OpenLexicon"):
     return list(words)
 
 
-def Switchboard(basepath=ROOT_VOCAB_DIR + "/ISIP"):
+def Switchboard(basepath: str = ROOT_VOCAB_DIR + "/ISIP"):
     with open(basepath + "/switchboard_lexicon", "r") as f:
         lines = f.readlines()
     words = [line.strip().split(maxsplit=2)[0].upper() for line in lines]
     return words
 
 
-def Google(basepath=ROOT_VOCAB_DIR + "/Google"):
+def Google(basepath: str = ROOT_VOCAB_DIR + "/Google"):
     table = pd.read_csv(
         basepath + "/vocab_common.txt",
         sep="\t",
@@ -51,14 +52,14 @@ def Google(basepath=ROOT_VOCAB_DIR + "/Google"):
     return list(words)
 
 
-def Google10K(basepath=ROOT_VOCAB_DIR + "/Google/google-10000-english-master"):
+def Google10K(basepath: str = ROOT_VOCAB_DIR + "/Google/google-10000-english-master"):
     words = pd.read_csv(
         basepath + "/google-10000-english.txt", names=["Word"], dtype={"Word": str}
     ).Word.str.upper()
     return list(words)
 
 
-def Google20K(basepath=ROOT_VOCAB_DIR + "/Google/google-10000-english-master"):
+def Google20K(basepath: str = ROOT_VOCAB_DIR + "/Google/google-10000-english-master"):
     words = pd.read_csv(
         basepath + "/20k.txt", names=["Word"], dtype={"Word": str}
     ).Word.str.upper()
@@ -72,7 +73,7 @@ def VoxForge(basepath=ROOT_VOCAB_DIR + "/VoxForge"):
     return words
 
 
-def Wictionary(basepath=ROOT_VOCAB_DIR + "/Wictionary"):
+def Wictionary(basepath: str = ROOT_VOCAB_DIR + "/Wictionary"):
     words = pd.read_csv(
         basepath + "/wiki-100k.txt", names=["Word"], dtype={"Word": str}, comment="#"
     ).Word.str.upper()
@@ -98,7 +99,9 @@ def Prosodylab():
 
 
 def LibriSpeech(
-    basepath=ROOT_VOCAB_DIR + "/LibriSpeech", return_count=False, compatibility=False
+    basepath: str = ROOT_VOCAB_DIR + "/LibriSpeech",
+    return_count: bool = False,
+    compatibility: bool = False,
 ):
     table = pd.read_csv(
         basepath + "/vocabulary.csv" + (".compat" if compatibility else ""),
@@ -114,11 +117,11 @@ def LibriSpeech(
 def Words(
     train=None,
     reference=None,
-    vocab_size=None,
-    insert_blank=True,
-    insert_na=False,
-    normalize=False,
-    compatibility=False,
+    vocab_size: Optional[int] = None,
+    insert_blank: bool = True,
+    insert_na: bool = False,
+    normalize: bool = False,
+    compatibility: bool = False,
 ):
     train, count = (
         LibriSpeech(return_count=True, compatibility=compatibility)
@@ -133,7 +136,7 @@ def Words(
     count_dict = dict()
     for w, c in zip(train, count):
         tokens = (
-            _normalize(w, reference)
+            normalize_token(w, reference)
             if normalize
             else [w if w in reference else "[UNK]"]
         )
@@ -164,10 +167,10 @@ def Words(
 
 
 def Phones(
-    basepath=ROOT_VOCAB_DIR + "/CMU",
-    stressed=False,
-    insert_blank=True,
-    insert_space=False,
+    basepath: str = ROOT_VOCAB_DIR + "/CMU",
+    stressed: bool = False,
+    insert_blank: bool = True,
+    insert_space: bool = False,
 ):
     if stressed:
         with open(basepath + "/cmudict/cmudict-0.7b.symbols", "r") as f:
@@ -191,11 +194,11 @@ def Phones(
 def Syllables(
     words=None,
     counts=None,
-    stressed=False,
-    vocab_size=None,
-    insert_blank=True,
-    insert_space=False,
-    compatibility=False,
+    stressed: bool = False,
+    vocab_size: Optional[int] = None,
+    insert_blank: bool = True,
+    insert_space: bool = False,
+    compatibility: bool = False,
 ):
     if words is None:
         words, counts = LibriSpeech(return_count=True, compatibility=compatibility)
@@ -229,12 +232,12 @@ def Characters():
     return list("_'ABCDEFGHIJKLMNOPQRSTUVWXYZ ")
 
 
-def pronounce(word, stressed=False):
+def pronounce(word: str, stressed: bool = False):
     pronun = PRONUN_DICT.get(word.upper(), "")
     return pronun if stressed else re.sub(r"([A-Z]+)[0-9]", r"\g<1>", pronun)
 
 
-def syllabize(phones=None, word=None, stressed=False):
+def syllabize(phones=None, word=None, stressed: bool = False):
     if word:  # ignore phones
         phones = pronounce(word, stressed=True)
 
@@ -283,7 +286,7 @@ def _variations(vocab):
     return expansion
 
 
-def _normalize(token, reference=None):
+def normalize_token(token, reference=None):
     # split 's at end of word
     if token.endswith("S'"):
         possesive, token = True, token[:-1]
@@ -314,19 +317,23 @@ def _normalize(token, reference=None):
     return token_list
 
 
-def _is_prefix(token):
+def is_prefix(token: str):
     return token.endswith("|")
 
 
-def _is_postfix(token):
+def is_stressed(token: str):
+    return token.endswith(tuple("0123456789"))
+
+
+def is_postfix(token: str):
     return token.startswith("|")
 
 
-def _is_subtoken(token):
+def is_subtoken(token: str):
     return bool(re.match(r"^\|\(.+\)$", token)) or bool(re.match(r"^\(.+\)\|$", token))
 
 
-def _next_available(word, dictionary):
+def _next_available(word: str, dictionary):
     word = re.sub(r"\([0-9]+\)$", "", word)
     if word not in dictionary:
         return word
