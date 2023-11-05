@@ -42,3 +42,10 @@ LIMITS_WORD = {
         "ok": Limits(time=17.0, tokens=60),
     }
 }
+
+LIMITS = {
+    "chars": LIMITS_CHAR,
+    "phones": LIMITS_PHONE,
+    "syllables": LIMITS_SYLLABLE,
+    "words": LIMITS_WORD,
+}
