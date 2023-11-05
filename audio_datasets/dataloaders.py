@@ -11,7 +11,8 @@ class LibriSpeechDataloader:
         stressed=True,
         labels=None,
         freqbins=128,
-        max_time=20.0,
+        max_time=30.0,
+        max_tokens=120,
         batch_size=12,
         num_workers=4,
         flat_labels=False,
@@ -35,29 +36,32 @@ class LibriSpeechDataloader:
         sounds["test"], annots["test"] = LibriSpeech(subset="test-clean")
         self.sounds, self.annots = sounds, annots
 
-        self.data_cfg = dict(
-            freqbins=freqbins,
-            batch_first=batch_first,
-            target=target,
-            stressed=stressed,
-            vocabulary=labels,
-            max_time=max_time,
-            audio_proc=audio_proc,
-            normalize=len([w for w in labels if "|" in w]) > 0,
-        )
+        self.data_cfg = {
+            "freqbins": freqbins,
+            "batch_first": batch_first,
+            "target": target,
+            "stressed": stressed,
+            "vocabulary": labels,
+            "max_time": max_time,
+            "max_tokens": max_tokens,
+            "audio_proc": audio_proc,
+            "normalize": len([w for w in labels if "|" in w]) > 0,
+        }
 
-        self.augment_cfg = dict(
-            speech=augment_speech,
-            room=augment_room,
-            channel=augment_channel,
-            scene=augment_scene,
-            mix_n=augment_mix_n,
-            mod_intensity=mod_intensity,
-        )
+        self.augment_cfg = {
+            "speech": augment_speech,
+            "room": augment_room,
+            "channel": augment_channel,
+            "scene": augment_scene,
+            "mix_n": augment_mix_n,
+            "mod_intensity": mod_intensity,
+        }
 
-        self.dataloader_cfg = dict(
-            flat_labels=flat_labels, batch_size=batch_size, num_workers=num_workers
-        )
+        self.dataloader_cfg = {
+            "flat_labels": flat_labels,
+            "batch_size": batch_size,
+            "num_workers": num_workers,
+        }
 
     def train_dataloader(
         self, data_cfg: dict = {}, augment_cfg: dict = {}, dataloader_cfg: dict = {}
@@ -152,17 +156,17 @@ class LibriSpeechSequenceDataloader(LibriSpeechDataloader):
 
 
 class LibriSpeechTokenDataloader(LibriSpeechDataloader):
-    def __init__(self, dataset_type=AlignedDataset, max_tokens=80, **kwargs):
+    def __init__(self, dataset_type=AlignedDataset, **kwargs):
         super().__init__(dataset_type=dataset_type, **kwargs)
-
-        self.data_cfg = {**self.data_cfg, "max_tokens": max_tokens}
+        self.data_cfg = {**self.data_cfg}
 
 
 def librispeech(
     target="words",
     vocabulary=None,
     freqbins=128,
-    max_time=20.0,
+    max_time=30.0,
+    max_tokens=120,
     batch_size=12,
     num_workers=4,
     flat_labels=False,
@@ -181,6 +185,7 @@ def librispeech(
         "target": target,
         "vocabulary": vocabulary,
         "max_time": max_time,
+        "max_tokens": max_tokens,
         "audio_proc": audio_proc,
         "normalize": len([w for w in vocabulary if "|" in w]) > 0,
     }
@@ -300,8 +305,8 @@ def librispeech_token(
     target="words",
     vocabulary=None,
     freqbins=128,
-    max_time=18.0,
-    max_tokens=80,
+    max_time=30.0,
+    max_tokens=120,
     batch_size=12,
     num_workers=4,
     audio_proc="default",

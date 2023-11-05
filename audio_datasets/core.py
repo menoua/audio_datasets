@@ -11,11 +11,12 @@ import torch
 import torchaudio
 from torchaudio import load as load_audio
 from torchaudio.sox_effects import apply_effects_tensor as apply_sox_effects
+from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
 from tqdm import tqdm
 
 from .data import NonSpeech
-from .lexicon import (normalize_token, is_postfix, is_prefix, is_stressed,
-                      is_subtoken, syllabize)
+from .lexicon import (is_postfix, is_prefix, is_stressed, is_subtoken,
+                      normalize_token, syllabize)
 
 torchaudio.set_audio_backend("sox_io")
 
@@ -134,7 +135,7 @@ class SoundDataset(torch.utils.data.Dataset):
 
         if audio_proc == "default":
             self.audio_proc = torch.nn.Sequential(
-                torchaudio.transforms.MelSpectrogram(
+                MelSpectrogram(
                     in_sr,
                     n_fft=1024,
                     hop_length=int(in_sr / out_sr),
@@ -143,7 +144,7 @@ class SoundDataset(torch.utils.data.Dataset):
                     n_mels=freqbins,
                     power=2.0,
                 ),
-                torchaudio.transforms.AmplitudeToDB("power", top_db=top_db),
+                AmplitudeToDB("power", top_db=top_db),
                 type(
                     "Normalize",
                     (torch.nn.Module,),
@@ -631,7 +632,7 @@ class AnnotatedDataset(SoundDataset):
         self,
         annotation: str,
         ignore_silence: bool = True,
-    ):
+    ) -> tuple[torch.Tensor, list[tuple[float, float]]]:
         fmt, filepath = annotation.split(":")
 
         if fmt == "libri":
@@ -696,7 +697,7 @@ class AnnotatedDataset(SoundDataset):
                 encoded_interv.append(intv)
             target, interv = encoded_target, encoded_interv
 
-        return (torch.tensor(target), interv)
+        return torch.tensor(target), interv
 
     def _get_limits(self, intervals: list[tuple[float, float]]) -> tuple[float, int]:
         if self.max_time < intervals[-1][1]:
@@ -1651,7 +1652,9 @@ class MultiAnnotatedDataset(SoundDataset):
 
         return textgrids.Tier(syllables)
 
-    def _annotation(self, annotation, target_type, ignore_silence=True, skew=None):
+    def _annotation(
+        self, annotation, target_type, ignore_silence=True, skew=None
+    ) -> tuple[torch.Tensor, list[tuple[float, float]]]:
         fmt, filepath = annotation.split(":")
 
         if fmt == "libri":
@@ -1713,9 +1716,6 @@ class MultiAnnotatedDataset(SoundDataset):
                 encoded_target.append(self.key[target_type][token])
                 encoded_interv.append(intv)
             target, interv = encoded_target, encoded_interv
-
-        if len(target) == 0:
-            raise EmptySequence()
 
         if skew is not None:
             interv = [(start * skew, stop * skew) for start, stop in interv]
