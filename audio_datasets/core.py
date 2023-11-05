@@ -378,9 +378,47 @@ class SoundDataset(torch.utils.data.Dataset):
             mod_scene=self.mod_scene,
         )
 
-    def iterator(self, shuffle=False, num_workers=0):
+    def iterator(
+        self,
+        batch_size: int = 1,
+        shuffle: bool = False,
+        num_workers: int = 0,
+        full_tensor: bool = True,
+    ):
+        def collate_fn(samples: list[SoundSample]) -> Optional[SoundBatch]:
+            if not samples or any(s is None for s in samples):
+                return None
+
+            xs = [s.sound for s in samples]
+            x0s = [s.source for s in samples]
+
+            xlens = torch.tensor([len(x) for x in xs], dtype=torch.int)
+            x0lens = torch.tensor([len(x0) for x0 in x0s], dtype=torch.int)
+
+            out_sr = samples[0].rate
+            max_xlen = int(self.limits.time * out_sr if full_tensor else xlens.max())
+            max_x0len = int(self.limits.time * out_sr if full_tensor else x0lens.max())
+
+            xs = [_pad_axis(x, 0, max_xlen - len(x), axis=0) for x in xs]
+            x0s = [_pad_axis(x0, 0, max_x0len - len(x0), axis=0) for x0 in x0s]
+
+            xs = torch.stack(xs, dim=self.batch_dim)
+            x0s = torch.stack(x0s, dim=self.batch_dim)
+
+            return SoundBatch(
+                sound=xs,
+                sound_length=xlens,
+                source=x0s,
+                source_length=x0lens,
+                rate=out_sr,
+            )
+
         return torch.utils.data.DataLoader(
-            self, shuffle=shuffle, num_workers=num_workers
+            self,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            collate_fn=collate_fn,
         )
 
     def _speech_modifier(self, tfm):
@@ -1083,10 +1121,10 @@ class BlockDataset(SoundDataset):
 
     def iterator(
         self,
-        batch_size=1,
-        batch_max=None,
-        shuffle=False,
-        num_workers=0,
+        batch_size: int = 1,
+        batch_max: Optional[int] = None,
+        shuffle: bool = False,
+        num_workers: int = 0,
     ):
         def collate_fn(samples: list[TokenizedSample]) -> Optional[SoundBatch]:
             samples = [s for s in samples if s is not None]
@@ -1251,10 +1289,10 @@ class SequenceDataset(AnnotatedDataset):
 
     def iterator(
         self,
-        batch_size=1,
-        batch_max=None,
-        shuffle=False,
-        num_workers=0,
+        batch_size: int = 1,
+        batch_max: Optional[int] = None,
+        shuffle: bool = False,
+        num_workers: int = 0,
     ):
         def collate_fn(samples: list[SequenceSample]) -> Optional[SequenceBatch]:
             samples = [s for s in samples if s is not None]
@@ -1492,9 +1530,9 @@ class SymmetricTokenDataset(AnnotatedDataset):
 
     def iterator(
         self,
-        batch_size=1,
-        shuffle=False,
-        num_workers=0,
+        batch_size: int = 1,
+        shuffle: bool = False,
+        num_workers: int = 0,
     ):
         def collate_fn(
             samples: list[AnnotatedTokenizedSample],
@@ -1949,9 +1987,9 @@ class MultiSymmetricTokenDataset(MultiAnnotatedDataset):
 
     def iterator(
         self,
-        batch_size=1,
-        shuffle=False,
-        num_workers=0,
+        batch_size: int = 1,
+        shuffle: bool = False,
+        num_workers: int = 0,
         # flat_labels=False
     ):
         def collate_fn(xpsw):
