@@ -9,15 +9,16 @@ import scipy as sp
 import textgrids
 import torch
 import torchaudio
+from torch import Tensor
 from torchaudio import load as load_audio
 from torchaudio.sox_effects import apply_effects_tensor as apply_sox_effects
 from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
 from tqdm import tqdm
 
 from .data import NonSpeech
-from .limits import Limits
 from .lexicon import (is_postfix, is_prefix, is_stressed, is_subtoken,
                       normalize_token, syllabize)
+from .limits import Limits
 
 torchaudio.set_audio_backend("sox_io")
 
@@ -71,29 +72,51 @@ CONFIG_MOD_HI = {
 
 
 @dataclass
-class Sample:
-    sound: torch.Tensor
-    source: torch.Tensor
+class SoundSample:
+    sound: Tensor
+    source: Tensor
     rate: int
-    labels: Optional[torch.Tensor] = None
-    label_locs: Optional[torch.Tensor] = None
-    intervals: Optional[list[tuple[float, float]]] = None
-    skew: float = 1
+    skew: float
 
 
 @dataclass
-class SampleBatch:
-    sounds: torch.Tensor
-    sound_lens: torch.Tensor
-    # sound_locs: Optional[torch.Tensor]
-    sources: torch.Tensor
-    source_lens: torch.Tensor
-    # source_locs: Optional[torch.Tensor]
+class AnnotatedSample(SoundSample):
+    labels: Tensor
+    intervals: list[tuple[float, float]]
+
+
+@dataclass
+class TokenizedSample:
+    sounds: Tensor
+    sound_lens: Tensor
+    # sound_locs: Optional[Tensor]
+    sources: Tensor
+    source_lens: Tensor
+    # source_locs: Optional[Tensor]
     rate: int
-    labels: Optional[torch.Tensor] = None
-    label_lens: Optional[torch.Tensor] = None
-    label_locs: Optional[torch.Tensor] = None
-    intervals: Optional[list[tuple[float, float]]] = None
+
+
+@dataclass
+class AnnotatedTokenizedSample(TokenizedSample):
+    labels: Tensor
+    label_lens: Tensor
+    # label_locs: Optional[Tensor]
+    intervals: list[tuple[float, float]]
+
+
+@dataclass
+class SequenceSample:
+    sounds: Tensor
+    sound_lens: Tensor
+    sound_span: Tensor
+    sources: Tensor
+    source_lens: Tensor
+    source_span: Tensor
+    rate: int
+    labels: Tensor
+    label_lens: Tensor
+    label_span: Tensor
+    intervals: list[tuple[float, float]]
 
 
 class SoundDataset(torch.utils.data.Dataset):
@@ -158,7 +181,7 @@ class SoundDataset(torch.utils.data.Dataset):
         return len(self.sounds)
 
     @torch.no_grad()
-    def __getitem__(self, idx: int, waveform: bool = False) -> Sample:
+    def __getitem__(self, idx: int, waveform: bool = False) -> SoundSample:
         in_path = self.sounds[idx]
 
         xforms = []
@@ -223,19 +246,17 @@ class SoundDataset(torch.utils.data.Dataset):
         # calculate spectrograms
         if waveform or self.audio_proc is None:
             x = mix_audio.T
+            x0 = in_audio.T
+            out_sr = self.in_sr
         else:
             x = self.audio_proc(mix_audio)
-
-        # calculate spectrograms for clean input
-        if waveform or self.audio_proc is None:
-            x0 = in_audio.T
-        else:
             x0 = self.audio_proc(in_audio)
+            out_sr = self.out_sr
 
-        return Sample(
+        return SoundSample(
             sound=x,
             source=x0,
-            rate=self.in_sr,
+            rate=out_sr,
             skew=skew,
         )
 
@@ -449,35 +470,34 @@ class AnnotatedDataset(SoundDataset):
         self,
         idx: int,
         waveform: bool = False,
-    ) -> Optional[Sample]:
+    ) -> Optional[AnnotatedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
-        out_sr = self.in_sr if waveform or self.audio_proc is None else self.out_sr
 
         y, intervals = self._annotation(self.annotations[idx])
-        if len(y) == 0:
-            return None
-
         intervals = [
             (start * sample.skew, stop * sample.skew) for start, stop in intervals
         ]
-        sample.labels = y
-        sample.intervals = intervals
+        if len(y) == 0:
+            return None
 
-        limits = self._get_limits(intervals)
-        if limits:
-            limits.time = int(limits.time * out_sr)
-            sample.sound = sample.sound[:limits.time]
-            sample.source = sample.source[:limits.time]
-            sample.labels = sample.labels[:limits.tokens]
-            sample.intervals = sample.intervals[:limits.tokens]
-
-        return Sample(
+        sample = AnnotatedSample(
             sound=sample.sound,
             source=sample.source,
-            rate=out_sr,
+            rate=sample.rate,
+            skew=sample.skew,
             labels=y,
             intervals=intervals,
         )
+
+        limits = self._get_limits(intervals)
+        if limits:
+            limits.time = int(limits.time * sample.rate)
+            sample.sound = sample.sound[: limits.time]
+            sample.source = sample.source[: limits.time]
+            sample.labels = sample.labels[: limits.tokens]
+            sample.intervals = sample.intervals[: limits.tokens]
+
+        return sample
 
     @property
     def num_classes(self):
@@ -495,22 +515,22 @@ class AnnotatedDataset(SoundDataset):
         full_tensor=True,
         flat_labels=False,
     ):
-        def collate_fn(samples: list[Sample]) -> Optional[SampleBatch]:
+        def collate_fn(samples: list[AnnotatedSample]) -> Optional[dict]:
             if not samples or any(s is None for s in samples):
                 return None
 
-            xs, x0s, ys = zip(
-                *[(s.sound, s.source, s.labels) for s in samples if s.labels is not None]
-            )
+            xs, x0s, ys = zip(*[(s.sound, s.source, s.labels) for s in samples])
             xlens = torch.tensor([len(x) for x in xs], dtype=torch.int)
+            x0lens = torch.tensor([len(x0) for x0 in x0s], dtype=torch.int)
             ylens = torch.tensor([len(y) for y in ys], dtype=torch.int)
 
-            out_sr = self.in_sr if self.audio_proc is None else self.out_sr
+            out_sr = samples[0].rate
             max_xlen = int(self.limits.time * out_sr if full_tensor else xlens.max())
+            max_x0len = int(self.limits.time * out_sr if full_tensor else x0lens.max())
             max_ylen = int(self.limits.tokens if full_tensor else ylens.max())
 
             xs = [_pad_axis(x, 0, max_xlen - len(x), axis=0) for x in xs]
-            x0s = [_pad_axis(x0, 0, max_xlen - len(x0), axis=0) for x0 in x0s]
+            x0s = [_pad_axis(x0, 0, max_x0len - len(x0), axis=0) for x0 in x0s]
             if not flat_labels:
                 ys = [_pad_axis(y, 0, max_ylen - len(y), axis=0) for y in ys]
 
@@ -521,15 +541,15 @@ class AnnotatedDataset(SoundDataset):
             else:
                 ys = torch.stack(ys, dim=self.batch_dim)
 
-            return SampleBatch(
-                sounds=xs,
-                sound_lens=xlens,
-                sources=x0s,
-                source_lens=xlens,  # TODO
-                rate=samples[0].rate,
-                labels=ys,
-                label_lens=ylens,
-            )
+            return {
+                "sounds": xs,
+                "sound_lens": xlens,
+                "sources": x0s,
+                "source_lens": x0lens,
+                "rate": out_sr,
+                "labels": ys,
+                "label_lens": ylens,
+            }
 
         return torch.utils.data.DataLoader(
             self,
@@ -622,7 +642,7 @@ class AnnotatedDataset(SoundDataset):
         self,
         annotation: str,
         ignore_silence: bool = True,
-    ) -> tuple[torch.Tensor, list[tuple[float, float]]]:
+    ) -> tuple[Tensor, list[tuple[float, float]]]:
         fmt, filepath = annotation.split(":")
 
         if fmt == "libri":
@@ -708,72 +728,6 @@ class AnnotatedDataset(SoundDataset):
         return Limits(time=max_time, tokens=max_tokens)
 
 
-class AlignedDataset(AnnotatedDataset):
-    @torch.no_grad()
-    def __getitem__(self, idx: int, waveform: bool = False) -> Optional[Sample]:
-        sample = super().__getitem__(idx, waveform=waveform)
-        if sample is None or sample.intervals is None:
-            return None
-
-        out_sr = self.in_sr if waveform or self.audio_proc is None else self.out_sr
-        sample.label_locs = torch.as_tensor(
-            [int(intv[0] * out_sr) for intv in sample.intervals], dtype=torch.long
-        )
-
-        return sample
-
-    def iterator(
-        self,
-        batch_size: int = 1,
-        shuffle: bool = False,
-        num_workers: int = 0,
-    ):
-        def collate_fn(samples: list[Sample]) -> Optional[SampleBatch]:
-            samples = [s for s in samples if s is not None and s.label_locs is not None]
-            if not samples:
-                return None
-
-            xs, ys, ylocs = zip(*[(s.sound, s.labels, s.label_locs) for s in samples])
-            xlens = torch.tensor([len(x) for x in xs], dtype=torch.int)
-            ylens = torch.tensor([len(y) for y in ys], dtype=torch.int)
-
-            max_xlen = int(
-                self.limits.time * self.out_sr if self.limits.time else xlens.max()
-            )
-            max_ylen = int(self.limits.tokens if self.limits.tokens else ylens.max())
-            xs = torch.stack(
-                [_pad_axis(x, 0, max_xlen - len(x), axis=0) for x in xs],
-                dim=self.batch_dim,
-            )
-            ys = torch.stack(
-                [_pad_axis(y, 0, max_ylen - len(y), axis=0) for y in ys],
-                dim=self.batch_dim,
-            )
-            ylocs = torch.stack(
-                [_pad_axis(loc, 0, max_ylen - len(loc), axis=0) for loc in ylocs],
-                dim=self.batch_dim,
-            )
-
-            return SampleBatch(
-                sounds=xs,
-                sound_lens=xlens,
-                sources=xs,
-                source_lens=xlens,
-                rate=samples[0].rate,
-                labels=ys,
-                label_locs=ylocs,
-                label_lens=ylens,
-            )
-
-        return torch.utils.data.DataLoader(
-            self,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            num_workers=num_workers,
-            collate_fn=collate_fn,
-        )
-
-
 class TokenizedDataset(AnnotatedDataset):
     def __init__(
         self,
@@ -797,25 +751,25 @@ class TokenizedDataset(AnnotatedDataset):
         assert self.alignment in ["left", "center", "right"]
         assert context[0] >= 0 and context[1] >= 0
 
-    def __getitem__(self, idx: int, waveform: bool = False) -> Optional[SampleBatch]:
+    def __getitem__(
+        self, idx: int, waveform: bool = False
+    ) -> Optional[AnnotatedTokenizedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
         if sample is None or sample.labels is None or sample.intervals is None:
             return None
-
-        out_sr = self.in_sr if waveform or self.audio_proc is None else self.out_sr
 
         xs, xlens = [], []
         pre_ctx, post_ctx = self.context
         for start, stop in sample.intervals:
             length = stop - start
-            ctx_start = int((start - length * pre_ctx) * out_sr)
-            ctx_end = int((stop + length * post_ctx) * out_sr)
+            ctx_start = int((start - length * pre_ctx) * sample.rate)
+            ctx_end = int((stop + length * post_ctx) * sample.rate)
             x = sample.sound[max(ctx_start, 0) : ctx_end]
             x = _pad_axis(x, -ctx_start, ctx_end - len(sample.sound))
             xs.append(x)
             xlens.append(len(x))
 
-        fix_t = int(self.duration * (1 + pre_ctx + post_ctx) * out_sr)
+        fix_t = int(self.duration * (1 + pre_ctx + post_ctx) * sample.rate)
         freqs = np.linspace(1, self.freqbins, self.freqbins)
 
         ys = sample.labels.int()
@@ -854,6 +808,7 @@ class TokenizedDataset(AnnotatedDataset):
 
         xs = torch.stack(xs, dim=self.batch_dim).float()
         xlens = torch.tensor(xlens, dtype=torch.int)
+        ylens = torch.ones_like(xlens, dtype=torch.int)
 
         # TODO I don't remember what this was supposed to do
         if self.drop_modifiers:
@@ -861,13 +816,16 @@ class TokenizedDataset(AnnotatedDataset):
             ys = ys[xlens != 0]
             xlens = xlens[xlens != 0]
 
-        return SampleBatch(
+        # TODO clean sources not handled
+        return AnnotatedTokenizedSample(
             sounds=xs,
             sound_lens=xlens,
             sources=xs,
             source_lens=xlens,
             rate=sample.rate,
             labels=ys,
+            label_lens=ylens,
+            intervals=sample.intervals,
         )
 
     def iterator(
@@ -876,27 +834,28 @@ class TokenizedDataset(AnnotatedDataset):
         shuffle: bool = False,
         num_workers: int = 0,
     ):
-        def collate_fn(samples: list[SampleBatch]) -> Optional[SampleBatch]:
+        def collate_fn(samples: list[AnnotatedTokenizedSample]) -> Optional[dict]:
             samples = [s for s in samples if s is not None and s.labels is not None]
             if not samples:
                 return None
 
-            xs, ys, xlens = zip(
-                *[(s.sounds, s.labels, s.sound_lens) for s in samples if s.labels is not None]
+            xs, x0s, ys, xlens = zip(
+                *[(s.sounds, s.sources, s.labels, s.sound_lens) for s in samples]
             )
 
             xs = torch.cat(xs, dim=self.batch_dim)
+            x0s = torch.cat(x0s, dim=self.batch_dim)
             ys = torch.cat(ys, dim=self.batch_dim)
             xlens = torch.cat(xlens)
 
-            return SampleBatch(
-                sounds=xs,
-                sound_lens=xlens,
-                sources=xs,
-                source_lens=xlens,
-                rate=samples[0].rate,
-                labels=ys,
-            )
+            return {
+                "sounds": xs,
+                "sound_lens": xlens,
+                "sources": x0s,
+                "source_lens": xlens,
+                "rate": samples[0].rate,
+                "labels": ys,
+            }
 
         return torch.utils.data.DataLoader(
             self,
@@ -1023,7 +982,9 @@ class BlockDataset(SoundDataset):
         self.max_step = max_time if max_step is None else max_step
         self.prepad = prepad
 
-    def __getitem__(self, idx: int, waveform: bool = False) -> Optional[SampleBatch]:
+    def __getitem__(
+        self, idx: int, waveform: bool = False
+    ) -> Optional[TokenizedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
         maxblk = int(self.limits.time * sample.rate)
         minblk = int(self.block_min * sample.rate)
@@ -1034,7 +995,7 @@ class BlockDataset(SoundDataset):
             sample.source = _pad_axis(sample.source, maxblk - 1, 0, axis=0)
 
         index = 0
-        xs, x0s, xlens = [], [], []
+        xs, x0s, xlens, x0lens = [], [], [], []
         while index < len(sample.sound):
             length = np.random.randint(minblk, maxblk + 1)
 
@@ -1046,6 +1007,7 @@ class BlockDataset(SoundDataset):
             xs.append(sample.sound[index : index + length])
             x0s.append(sample.source[index : index + length])
             xlens.append(length)
+            x0lens.append(length)
             index += min(length, maxstp)
 
         if len(xs) == 0:
@@ -1058,12 +1020,13 @@ class BlockDataset(SoundDataset):
             [_pad_axis(x0, 0, maxblk - len(x0), axis=self.batch_dim) for x0 in x0s]
         )
         xlens = torch.tensor(xlens, dtype=torch.int)
+        x0lens = torch.tensor(x0lens, dtype=torch.int)
 
-        return SampleBatch(
+        return TokenizedSample(
             sounds=xs,
             sound_lens=xlens,
             sources=x0s,
-            source_lens=xlens,
+            source_lens=x0lens,
             rate=sample.rate,
         )
 
@@ -1074,30 +1037,32 @@ class BlockDataset(SoundDataset):
         shuffle=False,
         num_workers=0,
     ):
-        def collate_fn(samples: list[SampleBatch]) -> Optional[SampleBatch]:
+        def collate_fn(samples: list[TokenizedSample]) -> Optional[dict]:
             samples = [s for s in samples if s is not None]
             if not samples:
                 return None
 
-            xs, xlens, x0s = zip(
-                *[(s.sounds, s.sound_lens, s.sources) for s in samples]
+            xs, xlens, x0s, x0lens = zip(
+                *[(s.sounds, s.sound_lens, s.sources, s.source_lens) for s in samples]
             )
             xs = torch.cat(xs, dim=self.batch_dim)
             x0s = torch.cat(x0s, dim=self.batch_dim)
             xlens = torch.cat(xlens)
+            x0lens = torch.cat(x0lens)
 
             if batch_max is not None:
                 xs = xs[:batch_max] if self.batch_dim == 0 else xs[:, :batch_max]
                 x0s = x0s[:batch_max] if self.batch_dim == 0 else x0s[:, :batch_max]
                 xlens = xlens[:batch_max]
+                x0lens = x0lens[:batch_max]
 
-            return SampleBatch(
-                sounds=xs,
-                sound_lens=xlens,
-                sources=x0s,
-                source_lens=xlens,
-                rate=samples[0].rate,
-            )
+            return {
+                "sounds": xs,
+                "sound_lens": xlens,
+                "sources": x0s,
+                "source_lens": x0lens,
+                "rate": samples[0].rate,
+            }
 
         return torch.utils.data.DataLoader(
             self,
@@ -1130,7 +1095,7 @@ class SequenceDataset(AnnotatedDataset):
         self.check_boundaries = check_boundaries
 
     @torch.no_grad()
-    def __getitem__(self, idx: int, waveform: bool = False) -> Optional[SampleBatch]:
+    def __getitem__(self, idx: int, waveform: bool = False) -> Optional[SequenceSample]:
         sample = super().__getitem__(idx, waveform=waveform)
         if sample is None or sample.labels is None or sample.intervals is None:
             return None
@@ -1138,7 +1103,9 @@ class SequenceDataset(AnnotatedDataset):
         maxblk = int(self.seq_time * sample.rate)
 
         index = 0
-        xs, ys, xlens, ylens, x0s, xpos, ypos = [], [], [], [], [], [], []
+        xs, xlens, xpos = [], [], []
+        x0s, x0lens, x0pos = [], [], []
+        ys, ylens, ypos = [], [], []
         while index < len(sample.intervals):
             if self.check_boundaries and is_postfix(
                 self.vocabulary[sample.labels[index]]
@@ -1183,11 +1150,13 @@ class SequenceDataset(AnnotatedDataset):
                 continue
 
             xs.append(sample.sound[start:stop])
+            x0s.append(sample.source[start:stop])
             ys.append(sample.labels[index : index + length])
             xlens.append(stop - start)
+            x0lens.append(stop - start)
             ylens.append(length)
-            x0s.append(sample.source[start:stop])
             xpos.append((start, stop))
+            x0pos.append((start, stop))
             ypos.append((index, index + length))
             index += 1 if self.seq_overlap else length
 
@@ -1198,28 +1167,33 @@ class SequenceDataset(AnnotatedDataset):
             [_pad_axis(x, 0, maxblk - len(x), axis=0) for x in xs], dim=self.batch_dim
         )
         x0s = torch.stack(
-            [_pad_axis(x, 0, maxblk - len(x), axis=0) for x in x0s], dim=self.batch_dim
+            [_pad_axis(x0, 0, maxblk - len(x0), axis=0) for x0 in x0s],
+            dim=self.batch_dim,
         )
         ys = torch.stack(
             [_pad_axis(y, 0, self.seq_size - len(y), axis=0) for y in ys],
             dim=self.batch_dim,
         )
         xlens = torch.tensor(xlens, dtype=torch.int)
+        x0lens = torch.tensor(x0lens, dtype=torch.int)
         ylens = torch.tensor(ylens, dtype=torch.int)
         xpos = torch.tensor(xpos, dtype=torch.int)
+        x0pos = torch.tensor(x0pos, dtype=torch.int)
         ypos = torch.tensor(ypos, dtype=torch.int)
 
-        return SampleBatch(
+        # TODO check if clean sources properly handled
+        return SequenceSample(
             sounds=xs,
             sound_lens=xlens,
-            # sound_locs=xpos,
+            sound_span=xpos,
             sources=x0s,
-            source_lens=xlens,
-            # source_locs=xpos,
+            source_lens=x0lens,
+            source_span=x0pos,
             rate=sample.rate,
             labels=ys,
-            label_locs=ypos,
             label_lens=ylens,
+            label_span=ypos,
+            intervals=sample.intervals,  # TODO might be meaningless here
         )
 
     def iterator(
@@ -1229,32 +1203,29 @@ class SequenceDataset(AnnotatedDataset):
         shuffle=False,
         num_workers=0,
     ):
-        def collate_fn(samples: list[SampleBatch]) -> Optional[SampleBatch]:
+        def collate_fn(samples: list[SequenceSample]) -> Optional[dict]:
             samples = [s for s in samples if s is not None]
             if not samples:
                 return None
 
-            # xs, ys, xlens, ylens, x0s, xpos, ypos = zip(*[
-            xs, xlens, x0s, ys, ylens, ypos = zip(
-                *[
-                    (
-                        s.sounds,
-                        s.sound_lens,
-                        s.sources,
-                        s.labels,
-                        s.label_lens,
-                        s.label_locs,
-                    )
-                    for s in samples
-                ]
-            )
+            xs = [s.sounds for s in samples]
+            x0s = [s.sources for s in samples]
+            ys = [s.labels for s in samples]
+            xlens = [s.sound_lens for s in samples]
+            x0lens = [s.source_lens for s in samples]
+            ylens = [s.label_lens for s in samples]
+            xpos = [s.sound_span for s in samples]
+            x0pos = [s.source_span for s in samples]
+            ypos = [s.label_span for s in samples]
 
             xs = torch.cat(xs, dim=self.batch_dim)
             x0s = torch.cat(x0s, dim=self.batch_dim)
             ys = torch.cat(ys, dim=self.batch_dim)
             xlens = torch.cat(xlens)
+            x0lens = torch.cat(x0lens)
             ylens = torch.cat(ylens)
-            # xpos = torch.cat(xpos)
+            xpos = torch.cat(xpos)
+            x0pos = torch.cat(x0pos)
             ypos = torch.cat(ypos)
 
             # batch_size = xs.shape[self.batch_dim]
@@ -1263,21 +1234,24 @@ class SequenceDataset(AnnotatedDataset):
                 x0s = x0s[:batch_max] if self.batch_dim == 0 else x0s[:, :batch_max]
                 ys = ys[:batch_max] if self.batch_dim == 0 else ys[:, :batch_max]
                 xlens = xlens[:batch_max]
+                x0lens = x0lens[:batch_max]
                 ylens = ylens[:batch_max]
-                # xpos = xpos[:batch_max]
+                xpos = xpos[:batch_max]
+                x0pos = x0pos[:batch_max]
                 ypos = ypos[:batch_max]
 
-            return SampleBatch(
-                sounds=xs,
-                sound_lens=xlens,
-                # sound_locs=xpos,
-                sources=x0s,
-                source_lens=xlens,
-                rate=samples[0].rate,
-                labels=ys,
-                label_lens=ylens,
-                label_locs=ypos,
-            )
+            return {
+                "sounds": xs,
+                "sound_lens": xlens,
+                "sound_span": xpos,
+                "sources": x0s,
+                "source_lens": x0lens,
+                "source_span": x0pos,
+                "rate": samples[0].rate,
+                "labels": ys,
+                "label_lens": ylens,
+                "label_span": ypos,
+            }
 
         return torch.utils.data.DataLoader(
             self,
@@ -1383,9 +1357,11 @@ class SymmetricTokenDataset(AnnotatedDataset):
         self.acc_range = acc_range
         self.rate = rate
 
-    def __getitem__(self, idx: int, waveform: bool = False) -> Optional[SampleBatch]:
+    def __getitem__(
+        self, idx: int, waveform: bool = False
+    ) -> Optional[AnnotatedTokenizedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
-        if sample is None or sample.labels is None or sample.intervals is None:
+        if sample is None:
             return None
 
         yint_filt = [
@@ -1440,20 +1416,25 @@ class SymmetricTokenDataset(AnnotatedDataset):
                     xs[i] = sp.interpolate.RectBivariateSpline(t0, freqs, xi)(t1, freqs)
 
         xlens = torch.tensor([len(x) for x in xs], dtype=torch.int)
+        ylens = torch.ones_like(xlens, dtype=torch.int)
         xs = torch.stack(xs, dim=0).float()
         ys = torch.stack(ys, dim=0).int()
 
         xs = xs[xlens != 0]
         ys = ys[xlens != 0]
         xlens = xlens[xlens != 0]
+        ylens = ylens[ylens != 0]
 
-        return SampleBatch(
+        # TODO clean sources not handled
+        return AnnotatedTokenizedSample(
             sounds=xs,
             sound_lens=xlens,
             sources=xs,
             source_lens=xlens,
             rate=sample.rate,
             labels=ys,
+            label_lens=ylens,
+            intervals=sample.intervals,
         )
 
     def iterator(
@@ -1462,23 +1443,31 @@ class SymmetricTokenDataset(AnnotatedDataset):
         shuffle=False,
         num_workers=0,
     ):
-        def collate_fn(samples: list[SampleBatch]) -> Optional[SampleBatch]:
+        def collate_fn(samples: list[AnnotatedTokenizedSample]) -> Optional[dict]:
             if any(s is None or s.labels is None for s in samples):
                 return None
 
-            xs, ys, xlens = zip(*[(s.sounds, s.labels, s.sound_lens) for s in samples])
+            xs, xlens, x0s, x0lens, ys = zip(
+                *[
+                    (s.sounds, s.sound_lens, s.sources, s.source_lens, s.labels)
+                    for s in samples
+                ]
+            )
             xs = torch.cat(xs, dim=self.batch_dim)
+            x0s = torch.cat(x0s, dim=self.batch_dim)
             ys = torch.cat(ys, dim=self.batch_dim)
             xlens = torch.cat(xlens)
+            x0lens = torch.cat(x0lens)
 
-            return SampleBatch(
-                sounds=xs,
-                sound_lens=xlens,
-                sources=xs,
-                source_lens=xlens,
-                rate=samples[0].rate,
-                labels=ys,
-            )
+            # clean sources not handled
+            return {
+                "sounds": xs,
+                "sound_lens": xlens,
+                "sources": x0s,
+                "source_lens": x0lens,
+                "rate": samples[0].rate,
+                "labels": ys,
+            }
 
         return torch.utils.data.DataLoader(
             self,
@@ -1647,7 +1636,7 @@ class MultiAnnotatedDataset(SoundDataset):
 
     def _annotation(
         self, annotation, target_type, ignore_silence=True, skew=None
-    ) -> tuple[torch.Tensor, list[tuple[float, float]]]:
+    ) -> tuple[Tensor, list[tuple[float, float]]]:
         fmt, filepath = annotation.split(":")
 
         if fmt == "libri":
@@ -1994,9 +1983,7 @@ class MultiSymmetricTokenDataset(MultiAnnotatedDataset):
         return xs, ys, ps, ss, ws
 
 
-def _pad_axis(
-    array: torch.Tensor, pre: int = 0, post: int = 0, axis: int = 0
-) -> torch.Tensor:
+def _pad_axis(array: Tensor, pre: int = 0, post: int = 0, axis: int = 0) -> Tensor:
     pre, post = max(pre, 0), max(post, 0)
     if pre == 0 and post == 0:
         return array
