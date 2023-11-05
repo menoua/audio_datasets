@@ -15,6 +15,7 @@ from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
 from tqdm import tqdm
 
 from .data import NonSpeech
+from .limits import Limits
 from .lexicon import (is_postfix, is_prefix, is_stressed, is_subtoken,
                       normalize_token, syllabize)
 
@@ -292,8 +293,7 @@ class SoundDataset(torch.utils.data.Dataset):
         annotations: list[str],
         vocabulary: list[str],
         target: str,
-        max_time: float,
-        max_tokens: int,
+        limits: Limits,
         value_nil: int = 0,
         ignore_silence: bool = True,
         normalize: bool = False,
@@ -303,8 +303,7 @@ class SoundDataset(torch.utils.data.Dataset):
             annotations,
             vocabulary,
             target,
-            max_time=max_time,
-            max_tokens=max_tokens,
+            limits=limits,
             value_nil=value_nil,
             ignore_silence=ignore_silence,
             normalize=normalize,
@@ -422,8 +421,7 @@ class AnnotatedDataset(SoundDataset):
         annotations: list[str],
         vocabulary: list[str],
         target: str,
-        max_time: float,
-        max_tokens: int,
+        limits: Limits,
         value_nil: int = 0,
         ignore_silence: bool = True,
         normalize: bool = False,
@@ -437,8 +435,7 @@ class AnnotatedDataset(SoundDataset):
             is_stressed(w) for w in vocabulary
         )
         self.value_nil = value_nil
-        self.max_time = max_time
-        self.max_tokens = max_tokens
+        self.limits = limits
         self.normalize = normalize
         self.spaced = " " in vocabulary
         self.include_na = "[UNK]" in vocabulary
@@ -468,12 +465,11 @@ class AnnotatedDataset(SoundDataset):
 
         limits = self._get_limits(intervals)
         if limits:
-            time_limit, token_limit = limits
-            time_limit = int(time_limit * out_sr)
-            sample.sound = sample.sound[:time_limit]
-            sample.source = sample.source[:time_limit]
-            sample.labels = sample.labels[:token_limit]
-            sample.intervals = sample.intervals[:token_limit]
+            limits.time = int(limits.time * out_sr)
+            sample.sound = sample.sound[:limits.time]
+            sample.source = sample.source[:limits.time]
+            sample.labels = sample.labels[:limits.tokens]
+            sample.intervals = sample.intervals[:limits.tokens]
 
         return Sample(
             sound=sample.sound,
@@ -487,10 +483,8 @@ class AnnotatedDataset(SoundDataset):
     def num_classes(self):
         return len(self.vocabulary)
 
-    def limit(self, max_time: float, max_tokens: int):
-        self.max_time = max_time
-        self.max_tokens = max_tokens
-
+    def limit(self, limits: Limits):
+        self.limits = limits
         return self
 
     def iterator(
@@ -512,8 +506,8 @@ class AnnotatedDataset(SoundDataset):
             ylens = torch.tensor([len(y) for y in ys], dtype=torch.int)
 
             out_sr = self.in_sr if self.audio_proc is None else self.out_sr
-            max_xlen = int(self.max_time * out_sr if full_tensor else xlens.max())
-            max_ylen = int(self.max_tokens if full_tensor else ylens.max())
+            max_xlen = int(self.limits.time * out_sr if full_tensor else xlens.max())
+            max_ylen = int(self.limits.tokens if full_tensor else ylens.max())
 
             xs = [_pad_axis(x, 0, max_xlen - len(x), axis=0) for x in xs]
             x0s = [_pad_axis(x0, 0, max_xlen - len(x0), axis=0) for x0 in x0s]
@@ -695,12 +689,12 @@ class AnnotatedDataset(SoundDataset):
 
         return torch.tensor(target), interv
 
-    def _get_limits(self, intervals: list[tuple[float, float]]) -> tuple[float, int]:
-        if self.max_time < intervals[-1][1]:
-            max_time = [end for _, end in intervals if end <= self.max_time][-1]
+    def _get_limits(self, intervals: list[tuple[float, float]]) -> Limits:
+        if self.limits.time < intervals[-1][1]:
+            max_time = [end for _, end in intervals if end <= self.limits.time][-1]
         else:
-            max_time = self.max_time
-        max_tokens = self.max_tokens
+            max_time = self.limits.time
+        max_tokens = self.limits.tokens
 
         if len(intervals) > max_tokens:
             time_limit_equiv = intervals[max_tokens][0]
@@ -711,7 +705,7 @@ class AnnotatedDataset(SoundDataset):
         max_time = min(max_time, time_limit_equiv)
         max_tokens = min(max_tokens, token_limit_equiv)
 
-        return max_time, max_tokens
+        return Limits(time=max_time, tokens=max_tokens)
 
 
 class AlignedDataset(AnnotatedDataset):
@@ -744,9 +738,9 @@ class AlignedDataset(AnnotatedDataset):
             ylens = torch.tensor([len(y) for y in ys], dtype=torch.int)
 
             max_xlen = int(
-                self.max_time * self.out_sr if self.max_time else xlens.max()
+                self.limits.time * self.out_sr if self.limits.time else xlens.max()
             )
-            max_ylen = int(self.max_tokens if self.max_tokens else ylens.max())
+            max_ylen = int(self.limits.tokens if self.limits.tokens else ylens.max())
             xs = torch.stack(
                 [_pad_axis(x, 0, max_xlen - len(x), axis=0) for x in xs],
                 dim=self.batch_dim,
@@ -1023,7 +1017,7 @@ class BlockDataset(SoundDataset):
         **kwargs,
     ):
         super().__init__(sounds, **kwargs)
-        self.max_time = max_time
+        self.limits.time = max_time
         self.block_min = block_min
         self.batch_first = batch_first
         self.max_step = max_time if max_step is None else max_step
@@ -1031,7 +1025,7 @@ class BlockDataset(SoundDataset):
 
     def __getitem__(self, idx: int, waveform: bool = False) -> Optional[SampleBatch]:
         sample = super().__getitem__(idx, waveform=waveform)
-        maxblk = int(self.max_time * sample.rate)
+        maxblk = int(self.limits.time * sample.rate)
         minblk = int(self.block_min * sample.rate)
         maxstp = int(self.max_step * sample.rate)
 

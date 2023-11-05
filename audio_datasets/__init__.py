@@ -14,4 +14,5 @@ import audio_datasets.core
 import audio_datasets.data
 import audio_datasets.dataloaders
 import audio_datasets.lexicon
+import audio_datasets.limits
 import audio_datasets.utils
