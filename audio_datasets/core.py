@@ -506,7 +506,7 @@ class AnnotatedDataset(SoundDataset):
                 return None
 
             xs, x0s, ys = zip(
-                *[(s.sound, s.source, s.labels) for s in samples if s.labels]
+                *[(s.sound, s.source, s.labels) for s in samples if s.labels is not None]
             )
             xlens = torch.tensor([len(x) for x in xs], dtype=torch.int)
             ylens = torch.tensor([len(y) for y in ys], dtype=torch.int)
@@ -735,7 +735,7 @@ class AlignedDataset(AnnotatedDataset):
         num_workers: int = 0,
     ):
         def collate_fn(samples: list[Sample]) -> Optional[SampleBatch]:
-            samples = [s for s in samples if s and s.label_locs]
+            samples = [s for s in samples if s is not None and s.label_locs is not None]
             if not samples:
                 return None
 
@@ -883,12 +883,12 @@ class TokenizedDataset(AnnotatedDataset):
         num_workers: int = 0,
     ):
         def collate_fn(samples: list[SampleBatch]) -> Optional[SampleBatch]:
-            samples = [s for s in samples if s and s.labels]
+            samples = [s for s in samples if s is not None and s.labels is not None]
             if not samples:
                 return None
 
             xs, ys, xlens = zip(
-                *[(s.sounds, s.labels, s.sound_lens) for s in samples if s.labels]
+                *[(s.sounds, s.labels, s.sound_lens) for s in samples if s.labels is not None]
             )
 
             xs = torch.cat(xs, dim=self.batch_dim)
@@ -1081,7 +1081,7 @@ class BlockDataset(SoundDataset):
         num_workers=0,
     ):
         def collate_fn(samples: list[SampleBatch]) -> Optional[SampleBatch]:
-            samples = [s for s in samples if s]
+            samples = [s for s in samples if s is not None]
             if not samples:
                 return None
 
