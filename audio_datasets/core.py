@@ -15,8 +15,8 @@ from torchaudio.sox_effects import apply_effects_tensor as apply_sox_effects
 from tqdm import tqdm
 
 from .augments import (CONFIG_MOD_HI, CONFIG_MOD_LO, CONFIG_MOD_MID,
-                       add_channel_modifier, add_room_modifier,
-                       add_speech_modifier)
+                       add_channel_modifier, add_noise_modifier,
+                       add_room_modifier, add_speech_modifier)
 from .data import NonSpeech
 from .lexicon import (is_postfix, is_prefix, is_stressed, is_subtoken,
                       normalize_token, syllabize)
@@ -188,24 +188,9 @@ class SoundDataset(torch.utils.data.Dataset):
         # scene modification
         if "mod_scene" in xforms:
             noise_path = np.random.choice(self.mod_scene)
-            noise_audio, noise_sr = load_audio(noise_path)
-
-            tfm = [["rate", str(self.in_sr)], ["channels", "1"]]
-            # repeat to cover full speech
-            dur_speech = mix_audio.shape[1] / mix_sr
-            dur_noise = noise_audio.shape[1] / noise_sr
-            count = math.ceil(dur_speech / dur_noise)
-            tfm.append(["repeat", str(count)])
-            # trim to same length as speech
-            tfm.append(["trim", "0", str(dur_speech)])
-            # set volume
-            snr_db = np.random.uniform(*self.mod_config["BG_SNR"])
-            tfm.append(["norm", str(-3 - snr_db)])
-            # process audio
-            noise_audio, noise_sr = apply_sox_effects(noise_audio, noise_sr, tfm)
-
-            mix_audio = (mix_audio + noise_audio[:, : mix_audio.shape[1]]) / np.sqrt(2)
-            mix_audio, mix_sr = apply_sox_effects(mix_audio, mix_sr, [["norm", "-3"]])
+            mix_audio, mix_sr = add_noise_modifier(
+                mix_audio, mix_sr, noise_path, self.mod_config
+            )
 
         # calculate skew
         skew = mix_audio.shape[1] / in_audio.shape[1]

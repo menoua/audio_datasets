@@ -1,4 +1,9 @@
+import math
+
 import numpy as np
+from torch import Tensor
+from torchaudio import load as load_audio
+from torchaudio.sox_effects import apply_effects_tensor as apply_sox_effects
 
 CONFIG_MOD_LO = {
     "BG_SNR": (10, 15),
@@ -145,3 +150,28 @@ def add_channel_modifier(
         tfm.append(["sinc", str(cutoff_high) + "-" + str(cutoff_low)])
 
     return tfm
+
+
+def add_noise_modifier(
+    audio: Tensor, sr: int, noise_path: str, config: dict = CONFIG_MOD_MID
+):
+    noise_audio, noise_sr = load_audio(noise_path)
+
+    tfm = [["rate", str(sr)], ["channels", "1"]]
+    # repeat to cover full speech
+    dur_speech = audio.shape[1] / sr
+    dur_noise = noise_audio.shape[1] / noise_sr
+    count = math.ceil(dur_speech / dur_noise)
+    tfm.append(["repeat", str(count)])
+    # trim to same length as speech
+    tfm.append(["trim", "0", str(dur_speech)])
+    # set volume
+    snr_db = np.random.uniform(*config["BG_SNR"])
+    tfm.append(["norm", str(-3 - snr_db)])
+    # process audio
+    noise_audio, noise_sr = apply_sox_effects(noise_audio, noise_sr, tfm)
+
+    audio = (audio + noise_audio[:, : audio.shape[1]]) / np.sqrt(2)
+    audio, sr = apply_sox_effects(audio, sr, [["norm", "-3"]])
+
+    return audio, sr
