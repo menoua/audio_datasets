@@ -18,7 +18,6 @@ from .data import NonSpeech
 from .lexicon import (is_postfix, is_prefix, is_stressed, is_subtoken,
                       normalize_token, syllabize)
 from .limits import Limits
-from .transforms import mel_spectrogram
 
 torchaudio.set_audio_backend("sox_io")
 

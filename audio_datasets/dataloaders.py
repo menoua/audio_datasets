@@ -12,7 +12,6 @@ class LibriSpeechDataloader:
         dataset_type=AnnotatedDataset,
         target: str = "words",
         labels: Optional[list[str]] = None,
-        freqbins: int = 128,
         limits: Limits = LIMITS_WORD["librispeech"]["max"],
         batch_size: int = 12,
         num_workers: int = 4,
@@ -38,7 +37,6 @@ class LibriSpeechDataloader:
         self.sounds, self.annots = sounds, annots
 
         self.data_cfg = {
-            "freqbins": freqbins,
             "batch_first": batch_first,
             "target": target,
             "vocabulary": labels,
@@ -163,7 +161,6 @@ class LibriSpeechTokenDataloader(LibriSpeechDataloader):
 def librispeech(
     target: str = "words",
     vocabulary: Optional[list[str]] = None,
-    freqbins: int = 128,
     limits: Limits = LIMITS_WORD["librispeech"]["max"],
     batch_size: int = 12,
     num_workers: int = 4,
@@ -178,7 +175,6 @@ def librispeech(
     vocabulary = LABELS[target] if vocabulary is None else vocabulary
 
     data_config = {
-        "freqbins": freqbins,
         "batch_first": True,
         "target": target,
         "vocabulary": vocabulary,
@@ -228,7 +224,6 @@ def librispeech(
 def librispeech_sequence(
     target: str = "words",
     vocabulary: Optional[list[str]] = None,
-    freqbins: int = 128,
     seq_size: int = 20,
     seq_min: int = 1,
     block_size: float = 8.0,
@@ -245,7 +240,6 @@ def librispeech_sequence(
     vocabulary = LABELS[target] if vocabulary is None else vocabulary
 
     data_config = {
-        "freqbins": freqbins,
         "batch_first": False,
         "target": target,
         "vocabulary": vocabulary,
@@ -301,7 +295,6 @@ def librispeech_sequence(
 def librispeech_token(
     target: str = "words",
     vocabulary: Optional[list[str]] = None,
-    freqbins: int = 128,
     limits: Limits = LIMITS_WORD["librispeech"]["max"],
     batch_size: int = 12,
     num_workers: int = 4,
@@ -317,7 +310,6 @@ def librispeech_token(
     data_config = {
         "target": target,
         "vocabulary": vocabulary,
-        "freqbins": freqbins,
         "batch_first": True,
         "limits": limits,
         "audio_proc": audio_proc,
