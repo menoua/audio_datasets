@@ -165,27 +165,26 @@ class SoundDataset(torch.utils.data.Dataset):
         if xforms and self.mix_augments >= 0:
             xforms = np.random.choice(xforms, size=self.mix_augments, replace=False)
 
+        # process audio using built-in modifiers
         tfm = [["rate", str(self.in_sr)], ["channels", "1"]]
-        # custom modification
-        if "mod_custom" in xforms and self.mod_custom:
-            self.mod_custom(tfm)
-        # speech modification
         if "mod_speech" in xforms:
             add_speech_modifier(tfm, self.in_sr, self.mod_config)
-        # room modification
         if "mod_room" in xforms:
             add_room_modifier(tfm, self.mod_config)
-        # channel modification
         if "mod_channel" in xforms:
             add_channel_modifier(tfm, self.mod_config)
-        # set volume
-        tfm.append(["norm", "-3"])
-
-        # process audio
         in_audio, in_sr = load_audio(in_path)
         mix_audio, mix_sr = apply_sox_effects(in_audio, in_sr, tfm)
 
-        # scene modification
+        # apply custom modification to audio
+        if "mod_custom" in xforms and self.mod_custom:
+            mix_audio, mix_sr = self.mod_custom(mix_audio, mix_sr, self.mod_config)
+
+        # normalize volume
+        tfm.append(["norm", "-3"])
+        mix_audio, mix_sr = apply_sox_effects(in_audio, in_sr, tfm)
+
+        # apply additive noise to processed and normalized audio
         if "mod_scene" in xforms:
             noise_path = np.random.choice(self.mod_scene)
             mix_audio, mix_sr = add_noise_modifier(
@@ -231,15 +230,10 @@ class SoundDataset(torch.utils.data.Dataset):
         return self
 
     def speed_up(self, factor: float):
-        def modifier(tfm):
-            # if 0.9 < factor < 1.1:
-            #    tfm.append(['stretch', str(1/factor)])
-            # else:
-            #    tfm.append(['tempo', '-s', str(factor)])
-            tfm.append(["tempo", "-s", str(factor)])
-
-            tfm.append(["rate", str(self.in_sr)])
-            return tfm
+        def modifier(audio, sr, _):
+            tfm = [["tempo", "-s", str(factor)], ["rate", str(sr)]]
+            audio, sr = apply_sox_effects(audio, sr, tfm)
+            return audio, sr
 
         self.mod_custom = modifier
 
