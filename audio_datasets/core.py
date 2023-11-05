@@ -12,13 +12,13 @@ import torchaudio
 from torch import Tensor
 from torchaudio import load as load_audio
 from torchaudio.sox_effects import apply_effects_tensor as apply_sox_effects
-from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
 from tqdm import tqdm
 
 from .data import NonSpeech
 from .lexicon import (is_postfix, is_prefix, is_stressed, is_subtoken,
                       normalize_token, syllabize)
 from .limits import Limits
+from .transforms import mel_spectrogram
 
 torchaudio.set_audio_backend("sox_io")
 
@@ -165,7 +165,6 @@ class SoundDataset(torch.utils.data.Dataset):
         sounds: list[str],
         in_sr: int = 16_000,
         out_sr: int = 100,
-        freqbins: int = 128,
         audio_proc: Optional[Callable] = None,
         noise_reduce: bool = False,
         mod_speech: bool = False,
@@ -175,13 +174,11 @@ class SoundDataset(torch.utils.data.Dataset):
         mod_custom: Optional[Callable] = None,
         mix_augments: int = 1,
         mod_intensity: str = "low",
-        top_db: float = 70,
         batch_first: bool = True,
     ):
         self.sounds = sounds
         self.in_sr = in_sr
         self.out_sr = out_sr
-        self.freqbins = freqbins
         self.noise_reduce = noise_reduce
         self.mod_speech = mod_speech
         self.mod_room = mod_room
@@ -190,32 +187,8 @@ class SoundDataset(torch.utils.data.Dataset):
         self.mod_custom = mod_custom
         self.mix_augments = mix_augments
         self.set_intensity(mod_intensity)
-        self.top_db = top_db
         self.batch_dim = 0 if batch_first else 1
-
-        if audio_proc == "default":
-            self.audio_proc = torch.nn.Sequential(
-                MelSpectrogram(
-                    in_sr,
-                    n_fft=1024,
-                    hop_length=int(in_sr / out_sr),
-                    f_min=20,
-                    f_max=8_000,
-                    n_mels=freqbins,
-                    power=2.0,
-                ),
-                AmplitudeToDB("power", top_db=top_db),
-                type(
-                    "Normalize",
-                    (torch.nn.Module,),
-                    dict(
-                        forward=lambda _, x: (x - x.max()).squeeze(0).T.float() / top_db
-                        + 1
-                    ),
-                )(),
-            )
-        else:
-            self.audio_proc = audio_proc
+        self.audio_proc = audio_proc
 
     def __len__(self):
         return len(self.sounds)
@@ -370,12 +343,16 @@ class SoundDataset(torch.utils.data.Dataset):
             normalize=normalize,
             in_sr=self.in_sr,
             out_sr=self.out_sr,
-            freqbins=self.freqbins,
+            audio_proc=self.audio_proc,
             noise_reduce=self.noise_reduce,
             mod_speech=self.mod_speech,
             mod_room=self.mod_room,
             mod_channel=self.mod_channel,
             mod_scene=self.mod_scene,
+            mod_custom=self.mod_custom,
+            mix_augments=self.mix_augments,
+            mod_intensity=self.mod_intensity,
+            batch_first=self.batch_first,
         )
 
     def iterator(
@@ -850,8 +827,9 @@ class TokenizedDataset(AnnotatedDataset):
             xs.append(x)
             xlens.append(len(x))
 
+        freqbins = sample.sound.shape[1]
         fix_t = int(self.duration * (1 + pre_ctx + post_ctx) * sample.rate)
-        freqs = np.linspace(1, self.freqbins, self.freqbins)
+        freqs = np.linspace(1, freqbins, freqbins)
 
         ys = sample.label.int()
         if not self.scale:
@@ -1493,11 +1471,12 @@ class SymmetricTokenDataset(AnnotatedDataset):
             "slower": self.scale_factor,
         }[self.rate]
         target_t = int(context * scale_factor)
+        freqbins = sample.sound.shape[1]
 
         if target_t != context:
             t0 = np.linspace(1, context, context)
             t1 = np.linspace(1, context, target_t)
-            freqs = np.linspace(1, self.freqbins, self.freqbins)
+            freqs = np.linspace(1, freqbins, freqbins)
 
             for i, xi in enumerate(xs):
                 if waveform or self.audio_proc is None:
