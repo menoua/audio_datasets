@@ -1,4 +1,4 @@
-from .core import AlignedDataset, AnnotatedDataset, SequenceDataset
+from .core import AnnotatedDataset, SequenceDataset, TokenizedDataset
 from .data import LibriSpeech, NonSpeech
 from .lexicon import LABELS
 
@@ -154,7 +154,7 @@ class LibriSpeechSequenceDataloader(LibriSpeechDataloader):
 
 
 class LibriSpeechTokenDataloader(LibriSpeechDataloader):
-    def __init__(self, dataset_type=AlignedDataset, **kwargs):
+    def __init__(self, dataset_type=TokenizedDataset, **kwargs):
         super().__init__(dataset_type=dataset_type, **kwargs)
         self.data_cfg = {**self.data_cfg}
 
@@ -337,18 +337,18 @@ def librispeech_token(
     }
 
     if split == "train":
-        dataset = AlignedDataset(sounds["train"], annots["train"], **data_config)
+        dataset = TokenizedDataset(sounds["train"], annots["train"], **data_config)
         dataset.augment(**augment_config)
         return dataset.iterator(
             shuffle=True, batch_size=batch_size, num_workers=num_workers
         )
     elif split == "val":
-        dataset = AlignedDataset(sounds["val"], annots["val"], **data_config)
+        dataset = TokenizedDataset(sounds["val"], annots["val"], **data_config)
         return dataset.iterator(
             shuffle=False, batch_size=max(batch_size // 2, 1), num_workers=num_workers
         )
     elif split == "test":
-        dataset = AlignedDataset(sounds["test"], annots["test"], **data_config)
+        dataset = TokenizedDataset(sounds["test"], annots["test"], **data_config)
         return dataset.iterator(
             shuffle=False, batch_size=max(batch_size // 2, 1), num_workers=num_workers
         )
