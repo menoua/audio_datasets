@@ -1,28 +1,30 @@
+from typing import Optional
+
 from .core import AnnotatedDataset, SequenceDataset, TokenizedDataset
 from .data import LibriSpeech, NonSpeech
 from .lexicon import LABELS
+from .limits import LIMITS_WORD, Limits
 
 
 class LibriSpeechDataloader:
     def __init__(
         self,
         dataset_type=AnnotatedDataset,
-        target="words",
-        labels=None,
-        freqbins=128,
-        max_time=30.0,
-        max_tokens=120,
-        batch_size=12,
-        num_workers=4,
-        flat_labels=False,
-        batch_first=True,
+        target: str = "words",
+        labels: Optional[list[str]] = None,
+        freqbins: int = 128,
+        limits: Limits = LIMITS_WORD["librispeech"]["max"],
+        batch_size: int = 12,
+        num_workers: int = 4,
+        flat_labels: bool = False,
+        batch_first: bool = True,
         audio_proc="default",
-        augment_speech=False,
-        augment_room=False,
-        augment_channel=True,
-        augment_scene=[],  # NonSpeech(),
-        augment_mix_n=1,
-        mod_intensity="mid",
+        augment_speech: bool = False,
+        augment_room: bool = False,
+        augment_channel: bool = True,
+        augment_scene: list[str] = [],  # NonSpeech(),
+        augment_mix_n: int = 1,
+        mod_intensity: str = "mid",
     ):
         if labels is None:
             labels = LABELS[target]
@@ -40,8 +42,7 @@ class LibriSpeechDataloader:
             "batch_first": batch_first,
             "target": target,
             "vocabulary": labels,
-            "max_time": max_time,
-            "max_tokens": max_tokens,
+            "limits": limits,
             "audio_proc": audio_proc,
             "normalize": len([w for w in labels if "|" in w]) > 0,
         }
@@ -104,12 +105,12 @@ class LibriSpeechSequenceDataloader(LibriSpeechDataloader):
     def __init__(
         self,
         dataset_type=SequenceDataset,
-        seq_size=20,
-        seq_min=1,
-        seq_time=8.0,
-        seq_per_sample=4.0,
-        seq_overlap=False,
-        check_boundaries=True,
+        seq_size: int = 20,
+        seq_min: int = 1,
+        seq_time: float = 8.0,
+        seq_per_sample: float = 4.0,
+        seq_overlap: bool = False,
+        check_boundaries: bool = True,
         **kwargs,
     ):
         super().__init__(dataset_type=dataset_type, **kwargs)
@@ -160,16 +161,15 @@ class LibriSpeechTokenDataloader(LibriSpeechDataloader):
 
 
 def librispeech(
-    target="words",
-    vocabulary=None,
-    freqbins=128,
-    max_time=30.0,
-    max_tokens=120,
-    batch_size=12,
-    num_workers=4,
-    flat_labels=False,
+    target: str = "words",
+    vocabulary: Optional[list[str]] = None,
+    freqbins: int = 128,
+    limits: Limits = LIMITS_WORD["librispeech"]["max"],
+    batch_size: int = 12,
+    num_workers: int = 4,
+    flat_labels: bool = False,
     audio_proc="default",
-    split="val",
+    split: str = "val",
 ):
     sounds, annots = {}, {}
     sounds["train"], annots["train"] = LibriSpeech(subset="train-*")
@@ -182,8 +182,7 @@ def librispeech(
         "batch_first": True,
         "target": target,
         "vocabulary": vocabulary,
-        "max_time": max_time,
-        "max_tokens": max_tokens,
+        "limits": limits,
         "audio_proc": audio_proc,
         "normalize": len([w for w in vocabulary if "|" in w]) > 0,
     }
@@ -227,17 +226,17 @@ def librispeech(
 
 
 def librispeech_sequence(
-    target="words",
-    vocabulary=None,
-    freqbins=128,
-    seq_size=20,
-    seq_min=1,
-    block_size=8.0,
-    batch_size=12,
-    seq_per_sample=4.0,
-    num_workers=4,
+    target: str = "words",
+    vocabulary: Optional[list[str]] = None,
+    freqbins: int = 128,
+    seq_size: int = 20,
+    seq_min: int = 1,
+    block_size: float = 8.0,
+    batch_size: int = 12,
+    seq_per_sample: float = 4.0,
+    num_workers: int = 4,
     audio_proc="default",
-    split="val",
+    split: str = "val",
 ):
     sounds, annots = {}, {}
     sounds["train"], annots["train"] = LibriSpeech(subset="train-*")
@@ -300,15 +299,14 @@ def librispeech_sequence(
 
 
 def librispeech_token(
-    target="words",
-    vocabulary=None,
-    freqbins=128,
-    max_time=30.0,
-    max_tokens=120,
-    batch_size=12,
-    num_workers=4,
+    target: str = "words",
+    vocabulary: Optional[list[str]] = None,
+    freqbins: int = 128,
+    limits: Limits = LIMITS_WORD["librispeech"]["max"],
+    batch_size: int = 12,
+    num_workers: int = 4,
     audio_proc="default",
-    split="val",
+    split: str = "val",
 ):
     sounds, annots = {}, {}
     sounds["train"], annots["train"] = LibriSpeech(subset="train-*")
@@ -321,8 +319,7 @@ def librispeech_token(
         "vocabulary": vocabulary,
         "freqbins": freqbins,
         "batch_first": True,
-        "max_time": max_time,
-        "max_tokens": max_tokens,
+        "limits": limits,
         "audio_proc": audio_proc,
         "normalize": len([w for w in vocabulary if "|" in w]) > 0,
     }
