@@ -10,6 +10,7 @@ if "ROOT_VOCAB_DIR" in os.environ:
 else:
     ROOT_VOCAB_DIR = os.path.join(ROOT_DATA_DIR, "Vocabulary")
 
+import audio_datasets.augments
 import audio_datasets.core
 import audio_datasets.data
 import audio_datasets.dataloaders
