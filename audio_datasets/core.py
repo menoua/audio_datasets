@@ -69,10 +69,6 @@ CONFIG_MOD_HI = {
 }
 
 
-class EmptySequence(Exception):
-    pass
-
-
 @dataclass
 class Sample:
     sound: torch.Tensor
@@ -706,7 +702,10 @@ class AnnotatedDataset(SoundDataset):
             max_time = self.max_time
         max_tokens = self.max_tokens
 
-        time_limit_equiv = intervals[max_tokens][0]
+        if len(intervals) > max_tokens:
+            time_limit_equiv = intervals[max_tokens][0]
+        else:
+            time_limit_equiv = np.inf
         token_limit_equiv = len([1 for _, end in intervals if end <= max_time])
 
         max_time = min(max_time, time_limit_equiv)
