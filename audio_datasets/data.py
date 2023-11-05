@@ -6,7 +6,7 @@ import pandas as pd
 
 from . import ROOT_DATA_DIR
 
-DEFAULT_PARAMS = {}
+# DEFAULT_PARAMS = {}
 UNIFORM_FORMAT = True
 
 

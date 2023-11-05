@@ -3,7 +3,7 @@ from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
 
 
 def mel_spectrogram(
-    in_sr: int, out_sr: int = 100, n_mels: int = 128, top_db: float = 70
+    in_sr: int = 16_000, out_sr: int = 100, n_mels: int = 128, top_db: float = 70
 ):
     return Sequential(
         MelSpectrogram(

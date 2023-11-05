@@ -1,9 +1,10 @@
-from typing import Optional
+from typing import Callable, Optional
 
 from .core import AnnotatedDataset, SequenceDataset, TokenizedDataset
 from .data import LibriSpeech, NonSpeech
 from .lexicon import LABELS
 from .limits import LIMITS_WORD, Limits
+from .transforms import mel_spectrogram
 
 
 class LibriSpeechDataloader:
@@ -17,7 +18,7 @@ class LibriSpeechDataloader:
         num_workers: int = 4,
         flat_labels: bool = False,
         batch_first: bool = True,
-        audio_proc="default",
+        audio_proc: Optional[Callable] = mel_spectrogram(),
         augment_speech: bool = False,
         augment_room: bool = False,
         augment_channel: bool = True,
@@ -165,7 +166,7 @@ def librispeech(
     batch_size: int = 12,
     num_workers: int = 4,
     flat_labels: bool = False,
-    audio_proc="default",
+    audio_proc: Optional[Callable] = mel_spectrogram(),
     split: str = "val",
 ):
     sounds, annots = {}, {}
@@ -230,7 +231,7 @@ def librispeech_sequence(
     batch_size: int = 12,
     seq_per_sample: float = 4.0,
     num_workers: int = 4,
-    audio_proc="default",
+    audio_proc: Optional[Callable] = mel_spectrogram(),
     split: str = "val",
 ):
     sounds, annots = {}, {}
@@ -298,7 +299,7 @@ def librispeech_token(
     limits: Limits = LIMITS_WORD["librispeech"]["max"],
     batch_size: int = 12,
     num_workers: int = 4,
-    audio_proc="default",
+    audio_proc: Optional[Callable] = mel_spectrogram(),
     split: str = "val",
 ):
     sounds, annots = {}, {}
