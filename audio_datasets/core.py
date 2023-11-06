@@ -1507,459 +1507,459 @@ class SymmetricTokenDataset(AnnotatedDataset):
         return xs, ys
 
 
-class MultiAnnotatedDataset(SoundDataset):
-    def __init__(
-        self,
-        sounds,
-        annotations,
-        vocabulary,
-        *,
-        value_nil=0,
-        normalize=False,
-        ignore_silence=True,
-        **kwargs,
-    ):
-        super().__init__(sounds, **kwargs)
-        self.annotations = annotations
-        self.vocabulary = vocabulary
-        self.stressed = {
-            k in ("phones", "syllables") and any(is_stressed(w) for w in v)
-            for k, v in vocabulary.items()
-        }
-        self.value_nil = value_nil
-        self.normalize = normalize
-        self.spaced = {k: (" " in v) for k, v in vocabulary.items()}
-        self.include_na = {k: ("[UNK]" in v) for k, v in vocabulary.items()}
-        self.ignore_silence = ignore_silence
-        self.targets = sorted(vocabulary.keys())
-        self.key = {
-            k: {tok: i for i, tok in enumerate(v)} for k, v in vocabulary.items()
-        }
-
-    @torch.no_grad()
-    def __getitem__(self, idx: int, waveform: bool = False):
-        sample = super().__getitem__(idx, waveform=waveform)
-
-        p = self._annotation(self.annotations[idx], "phones", skew=sample.skew)
-        s = self._annotation(self.annotations[idx], "syllables", skew=sample.skew)
-        w = self._annotation(self.annotations[idx], "words", skew=sample.skew)
-
-        return sample.sound, p, s, w
-
-    def _spaced_textgrid(self, textgrid):
-        it_phone = iter(textgrid["phones"])
-        phone = next(it_phone)
-
-        phones = []
-        for word in textgrid["words"]:
-            if word.text in ["", "sp", "spn", "sil", "<unk>"]:
-                continue
-
-            try:
-                while phone.xmin < word.xmin - 1e-3:
-                    phone = next(it_phone)
-            except StopIteration:
-                break
-
-            if phone.xmin >= word.xmax + 1e-3:
-                continue
-
-            while phone.xmin < word.xmax - 1e-3:
-                phones.append(phone)
-                phone = next(it_phone)
-
-            if self.spaced["phones"] and len(phones) > 0:
-                phones.append(textgrids.Interval(" ", phones[-1].xmax, phones[-1].xmax))
-
-        return textgrids.Tier(phones)
-
-    def _syllabized_textgrid(self, textgrid):
-        it_phone = iter(textgrid["phones"])
-        phone = next(it_phone)
-
-        syllables = []
-        for word in textgrid["words"]:
-            if word.text in ["", "sp", "spn", "sil", "<unk>"]:
-                continue
-
-            try:
-                while phone.xmin < word.xmin - 1e-3:
-                    phone = next(it_phone)
-            except StopIteration:
-                break
-
-            if phone.xmin >= word.xmax + 1e-3:
-                continue
-
-            phones = []
-            while phone.xmin < word.xmax - 1e-3:
-                phones.append(phone)
-                phone = next(it_phone)
-
-            syllbs = syllabize([p.text for p in phones], stressed=True)
-            for syll in syllbs:
-                nsyll = len(syll.split("-"))
-                syllables.append(
-                    textgrids.Interval(syll, phones[0].xmin, phones[nsyll - 1].xmax)
-                )
-                phones = phones[nsyll:]
-
-            if self.spaced["syllables"] and len(syllbs) > 0:
-                syllables.append(
-                    textgrids.Interval(" ", syllables[-1].xmax, syllables[-1].xmax)
-                )
-
-        return textgrids.Tier(syllables)
-
-    def _annotation(
-        self, annotation, target_type, ignore_silence=True, skew=None
-    ) -> tuple[Tensor, list[tuple[float, float]]]:
-        fmt, filepath = annotation.split(":")
-
-        if fmt == "libri":
-            # read annotation file
-            textgrid = textgrids.TextGrid(filepath)
-            if target_type == "phones":
-                textgrid = self._spaced_textgrid(textgrid)
-            elif target_type == "syllables":
-                textgrid = self._syllabized_textgrid(textgrid)
-            else:
-                textgrid = textgrid[target_type]
-            # drop silence tokens
-            textgrid = (
-                [item for item in textgrid if item.text not in ["", "sp", "spn", "sil"]]
-                if ignore_silence
-                else textgrid
-            )
-            # transform to standard labels
-            for item in textgrid:
-                item.text = item.text.upper()
-
-            target = [item.text for item in textgrid]
-            interv = [(item.xmin, item.xmax) for item in textgrid]
-        elif fmt == "swc":
-            raise NotImplementedError(
-                "Spoken Wikipedia annotation not yet implemented!"
-            )
-        elif fmt == "tedlium":
-            raise NotImplementedError("TED-LIUM r3 annotation not yet implemented!")
-        else:
-            raise RuntimeError("Unknown annotation format:", fmt)
-
-        if target_type in ["phones", "syllables"] and not self.stressed:
-            target = [re.sub(r"([A-Z]+)[0-9]", r"\g<1>", token) for token in target]
-
-        if target_type == "words" and self.normalize:
-            expanded_target, expanded_interv = [], []
-            for token, intv in zip(target, interv):
-                subtokens = normalize_token(token)  # , self.vocabulary)
-                expanded_target += subtokens
-                expanded_interv += [
-                    intv
-                    if not is_subtoken(t)
-                    else (intv[:1] * 2 if is_prefix(t) else intv[1:] * 2)
-                    for t in subtokens
-                ]
-            target, interv = expanded_target, expanded_interv
-
-        if self.key[target_type]:
-            encoded_target, encoded_interv = [], []
-            for token, intv in zip(target, interv):
-                if token in self.key[target_type]:
-                    pass
-                elif self.include_na[target_type]:
-                    token = "[UNK]"
-                else:
-                    continue
-
-                encoded_target.append(self.key[target_type][token])
-                encoded_interv.append(intv)
-            target, interv = encoded_target, encoded_interv
-
-        if skew is not None:
-            interv = [(start * skew, stop * skew) for start, stop in interv]
-
-        return torch.tensor(target), interv
-
-
-class MultiSymmetricTokenDataset(MultiAnnotatedDataset):
-    def __init__(
-        self,
-        sounds,
-        annotations,
-        vocabulary,
-        *,
-        base_rate="moderate",
-        context=6,
-        alignment="center",
-        scale_factor=np.sqrt(2),
-        # filter_vocab=True,
-        label_sr=100,
-        **kwargs,
-    ):
-        assert base_rate in [
-            "fast",
-            "moderate",
-            "slow",
-            "no_ext",
-            "any",
-            "c10",
-            "c20",
-            "c30",
-            "c50",
-            "c90",
-            "c95",
-        ]
-        assert alignment in ["left", "center", "right"]
-
-        filename = "librispeech-statistics-words.npy"
-        if os.path.exists(filename):
-            stats = np.load(filename, allow_pickle=True).item()
-        elif os.path.exists(os.path.join("stats", filename)):
-            stats = np.load(os.path.join("stats", filename), allow_pickle=True).item()
-        else:
-            raise RuntimeError(f'Unit statistic file "{filename}" not found.')
-        lengths = dict()
-        for k, length in zip(stats["identity"], stats["length"]):
-            if k in lengths:
-                lengths[k].append(length)
-            else:
-                lengths[k] = [length]
-
-        alpha = 0.9
-        max_stretch = scale_factor**2
-        var_range = {
-            "fast": (0.05, 0.15),
-            "moderate": (0.45, 0.55),
-            "slow": (0.85, 0.95),
-            "no_ext": (0.05, 0.95),
-            "any": (0.00, 1.00),
-            "c10": (0.45, 0.55),
-            "c20": (0.4, 0.6),
-            "c30": (0.35, 0.65),
-            "c50": (0.25, 0.75),
-            "c90": (0.05, 0.95),
-            "c95": (0.025, 0.975),
-        }[base_rate]
-        anchor_vocabulary = [
-            k
-            for k, length in lengths.items()
-            if (vocabulary["words"] is None or k in vocabulary["words"])
-            and len(length) >= 100
-            and (
-                np.quantile(length, 0.5 + alpha / 2)
-                / np.quantile(length, 0.5 - alpha / 2)
-                >= max_stretch
-            )
-        ]
-        acc_range = {
-            k: (
-                np.quantile(lengths[k], var_range[0]),
-                np.quantile(lengths[k], var_range[1]),
-            )
-            for k in anchor_vocabulary
-        }
-
-        super().__init__(sounds, annotations, vocabulary, **kwargs)
-        self.base_rate = base_rate
-        self.context = context
-        self.alignment = alignment
-        self.scale_factor = scale_factor
-        self.var_range = var_range
-        self.acc_range = acc_range
-        self.label_sr = label_sr
-        self.anchor_vocabulary = anchor_vocabulary
-
-    def __getitem__(self, idx: int, waveform: bool = False):
-        x, p, s, w = super().__getitem__(idx, waveform=waveform)
-        out_sr = self.in_sr if waveform or self.audio_transform is None else self.out_sr
-        if x is None:
-            return (None,) * 5
-
-        anchors = [
-            (tok, intv)
-            for tok, intv in zip(*w)
-            if self.vocabulary["words"][tok] in self.anchor_vocabulary
-            and self.acc_range[self.vocabulary["words"][tok]][0] <= intv[1] - intv[0]
-            and intv[1] - intv[0] <= self.acc_range[self.vocabulary["words"][tok]][1]
-        ]
-        if len(anchors) == 0:
-            return (None,) * 5
-
-        y, intervals = zip(*anchors)
-
-        y_len = int(len(x) / out_sr * self.label_sr)
-        p_vec = torch.zeros(y_len, dtype=torch.int)
-        s_vec = torch.zeros(y_len, dtype=torch.int)
-        w_vec = torch.zeros(y_len, dtype=torch.int)
-        for tok, (start, stop) in zip(*p):
-            p_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
-        for tok, (start, stop) in zip(*s):
-            s_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
-        for tok, (start, stop) in zip(*w):
-            w_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
-
-        x_intervals = [
-            (int(start * out_sr), int(stop * out_sr)) for start, stop in intervals
-        ]
-        y_intervals = [
-            (int(start * self.label_sr), int(stop * self.label_sr))
-            for start, stop in intervals
-        ]
-
-        # x_durations = [stop - start for start, stop in x_intervals]
-        # y_durations = [stop - start for start, stop in y_intervals]
-
-        x_centers = [(start + stop) // 2 for start, stop in x_intervals]
-        y_centers = [(start + stop) // 2 for start, stop in y_intervals]
-
-        x_context = int(self.context * out_sr)
-        y_context = int(self.context * self.label_sr)
-
-        x_pre_context, x_post_context = (
-            math.floor(x_context / 2),
-            math.ceil(x_context / 2),
-        )
-        y_pre_context, y_post_context = (
-            math.floor(y_context / 2),
-            math.ceil(y_context / 2),
-        )
-
-        x_intervals = [
-            (center - x_pre_context, center + x_post_context) for center in x_centers
-        ]
-        y_intervals = [
-            (center - y_pre_context, center + y_post_context) for center in y_centers
-        ]
-
-        anchors = [
-            (token, x_intv, y_intv)
-            for token, x_intv, y_intv in zip(y, x_intervals, y_intervals)
-            if x_intv[0] >= 0
-            and x_intv[1] <= len(x)
-            and y_intv[0] >= 0
-            and y_intv[1] <= y_len
-        ]
-        if len(anchors) == 0:
-            return (None,) * 5
-        y, x_intervals, y_intervals = zip(*anchors)
-
-        x = [x[start:stop] for start, stop in x_intervals]
-        p = [p_vec[start:stop] for start, stop in y_intervals]
-        s = [s_vec[start:stop] for start, stop in y_intervals]
-        w = [w_vec[start:stop] for start, stop in y_intervals]
-        nonempty = [len(_) > 0 for _ in x]
-        if len(nonempty) == 0:
-            return (None,) * 5
-
-        x = torch.stack(x)[nonempty]
-        y = torch.tensor(y)[nonempty]
-        p = torch.stack(p)[nonempty]
-        s = torch.stack(s)[nonempty]
-        w = torch.stack(w)[nonempty]
-
-        return x, y, p, s, w
-
-    def iterator(
-        self,
-        batch_size: int = 1,
-        shuffle: bool = False,
-        num_workers: int = 0,
-        # flat_labels=False
-    ):
-        def collate_fn(xpsw):
-            xs, ys, ps, ss, ws = zip(*xpsw)
-            if any(y is None for y in ys):
-                return (None,) * 5
-
-            xs = np.concatenate(xs, axis=0)
-            ys = np.concatenate(ys, axis=0)
-            ps = np.concatenate(ps, axis=0)
-            ss = np.concatenate(ss, axis=0)
-            ws = np.concatenate(ws, axis=0)
-
-            xs = torch.as_tensor(xs)
-            ys = torch.as_tensor(ys)
-            ps = torch.as_tensor(ps)
-            ss = torch.as_tensor(ss)
-            ws = torch.as_tensor(ws)
-
-            if not self.batch_first:
-                xs = xs.transpose(0, 1).contiguous()
-                ys = ys.transpose(0, 1).contiguous()
-                ps = ps.transpose(0, 1).contiguous()
-                ss = ss.transpose(0, 1).contiguous()
-                ws = ws.transpose(0, 1).contiguous()
-
-            return xs, ys, ps, ss, ws
-
-        return torch.utils.data.DataLoader(
-            self,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            num_workers=num_workers,
-            collate_fn=collate_fn,
-        )
-
-    def take(
-        self,
-        n=int(1e9),
-        shuffle=False,
-        batch_size=1,
-        num_workers=0,
-        max_token_per_word=None,
-        return_labels=True,
-    ):
-        token_per_word = dict()
-        xs, ys, ps, ss, ws = [], [], [], [], []
-
-        pbar = tqdm(range(n))
-        it = iter(
-            self.iterator(
-                shuffle=shuffle, batch_size=batch_size, num_workers=num_workers
-            )
-        )
-        while len(xs) < n:
-            try:
-                x, y, p, s, w = next(it)
-            except StopIteration:
-                break
-
-            if x is None or y is None:
-                continue
-
-            batch_count = 0
-            for xi, yi, pi, si, wi in zip(x, y, p, s, w):
-                yi = yi.item()
-                if yi not in token_per_word:
-                    token_per_word[yi] = 0
-
-                if (
-                    max_token_per_word is None
-                    or token_per_word[yi] < max_token_per_word
-                ):
-                    xs.append(xi)
-                    ys.append(yi)
-                    ps.append(pi)
-                    ss.append(si)
-                    ws.append(wi)
-                    token_per_word[yi] += 1
-                    batch_count += 1
-
-            pbar.update(batch_count)
-
-        xs = torch.stack(xs, dim=0)[:n]
-        ys = (
-            np.array([self.vocabulary["words"][y] for y in ys])[:n]
-            if return_labels
-            else torch.tensor(ys)[:n]
-        )
-        ps = torch.stack(ps)[:n]
-        ss = torch.stack(ss)[:n]
-        ws = torch.stack(ws)[:n]
-
-        return xs, ys, ps, ss, ws
-
+# class MultiAnnotatedDataset(SoundDataset):
+#     def __init__(
+#         self,
+#         sounds,
+#         annotations,
+#         vocabulary,
+#         *,
+#         value_nil=0,
+#         normalize=False,
+#         ignore_silence=True,
+#         **kwargs,
+#     ):
+#         super().__init__(sounds, **kwargs)
+#         self.annotations = annotations
+#         self.vocabulary = vocabulary
+#         self.stressed = {
+#             k in ("phones", "syllables") and any(is_stressed(w) for w in v)
+#             for k, v in vocabulary.items()
+#         }
+#         self.value_nil = value_nil
+#         self.normalize = normalize
+#         self.spaced = {k: (" " in v) for k, v in vocabulary.items()}
+#         self.include_na = {k: ("[UNK]" in v) for k, v in vocabulary.items()}
+#         self.ignore_silence = ignore_silence
+#         self.targets = sorted(vocabulary.keys())
+#         self.key = {
+#             k: {tok: i for i, tok in enumerate(v)} for k, v in vocabulary.items()
+#         }
+#
+#     @torch.no_grad()
+#     def __getitem__(self, idx: int, waveform: bool = False):
+#         sample = super().__getitem__(idx, waveform=waveform)
+#
+#         p = self._annotation(self.annotations[idx], "phones", skew=sample.skew)
+#         s = self._annotation(self.annotations[idx], "syllables", skew=sample.skew)
+#         w = self._annotation(self.annotations[idx], "words", skew=sample.skew)
+#
+#         return sample.sound, p, s, w
+#
+#     def _spaced_textgrid(self, textgrid):
+#         it_phone = iter(textgrid["phones"])
+#         phone = next(it_phone)
+#
+#         phones = []
+#         for word in textgrid["words"]:
+#             if word.text in ["", "sp", "spn", "sil", "<unk>"]:
+#                 continue
+#
+#             try:
+#                 while phone.xmin < word.xmin - 1e-3:
+#                     phone = next(it_phone)
+#             except StopIteration:
+#                 break
+#
+#             if phone.xmin >= word.xmax + 1e-3:
+#                 continue
+#
+#             while phone.xmin < word.xmax - 1e-3:
+#                 phones.append(phone)
+#                 phone = next(it_phone)
+#
+#             if self.spaced["phones"] and len(phones) > 0:
+#                 phones.append(textgrids.Interval(" ", phones[-1].xmax, phones[-1].xmax))
+#
+#         return textgrids.Tier(phones)
+#
+#     def _syllabized_textgrid(self, textgrid):
+#         it_phone = iter(textgrid["phones"])
+#         phone = next(it_phone)
+#
+#         syllables = []
+#         for word in textgrid["words"]:
+#             if word.text in ["", "sp", "spn", "sil", "<unk>"]:
+#                 continue
+#
+#             try:
+#                 while phone.xmin < word.xmin - 1e-3:
+#                     phone = next(it_phone)
+#             except StopIteration:
+#                 break
+#
+#             if phone.xmin >= word.xmax + 1e-3:
+#                 continue
+#
+#             phones = []
+#             while phone.xmin < word.xmax - 1e-3:
+#                 phones.append(phone)
+#                 phone = next(it_phone)
+#
+#             syllbs = syllabize([p.text for p in phones], stressed=True)
+#             for syll in syllbs:
+#                 nsyll = len(syll.split("-"))
+#                 syllables.append(
+#                     textgrids.Interval(syll, phones[0].xmin, phones[nsyll - 1].xmax)
+#                 )
+#                 phones = phones[nsyll:]
+#
+#             if self.spaced["syllables"] and len(syllbs) > 0:
+#                 syllables.append(
+#                     textgrids.Interval(" ", syllables[-1].xmax, syllables[-1].xmax)
+#                 )
+#
+#         return textgrids.Tier(syllables)
+#
+#     def _annotation(
+#         self, annotation, target_type, ignore_silence=True, skew=None
+#     ) -> tuple[Tensor, list[tuple[float, float]]]:
+#         fmt, filepath = annotation.split(":")
+#
+#         if fmt == "libri":
+#             # read annotation file
+#             textgrid = textgrids.TextGrid(filepath)
+#             if target_type == "phones":
+#                 textgrid = self._spaced_textgrid(textgrid)
+#             elif target_type == "syllables":
+#                 textgrid = self._syllabized_textgrid(textgrid)
+#             else:
+#                 textgrid = textgrid[target_type]
+#             # drop silence tokens
+#             textgrid = (
+#                 [item for item in textgrid if item.text not in ["", "sp", "spn", "sil"]]
+#                 if ignore_silence
+#                 else textgrid
+#             )
+#             # transform to standard labels
+#             for item in textgrid:
+#                 item.text = item.text.upper()
+#
+#             target = [item.text for item in textgrid]
+#             interv = [(item.xmin, item.xmax) for item in textgrid]
+#         elif fmt == "swc":
+#             raise NotImplementedError(
+#                 "Spoken Wikipedia annotation not yet implemented!"
+#             )
+#         elif fmt == "tedlium":
+#             raise NotImplementedError("TED-LIUM r3 annotation not yet implemented!")
+#         else:
+#             raise RuntimeError("Unknown annotation format:", fmt)
+#
+#         if target_type in ["phones", "syllables"] and not self.stressed:
+#             target = [re.sub(r"([A-Z]+)[0-9]", r"\g<1>", token) for token in target]
+#
+#         if target_type == "words" and self.normalize:
+#             expanded_target, expanded_interv = [], []
+#             for token, intv in zip(target, interv):
+#                 subtokens = normalize_token(token)  # , self.vocabulary)
+#                 expanded_target += subtokens
+#                 expanded_interv += [
+#                     intv
+#                     if not is_subtoken(t)
+#                     else (intv[:1] * 2 if is_prefix(t) else intv[1:] * 2)
+#                     for t in subtokens
+#                 ]
+#             target, interv = expanded_target, expanded_interv
+#
+#         if self.key[target_type]:
+#             encoded_target, encoded_interv = [], []
+#             for token, intv in zip(target, interv):
+#                 if token in self.key[target_type]:
+#                     pass
+#                 elif self.include_na[target_type]:
+#                     token = "[UNK]"
+#                 else:
+#                     continue
+#
+#                 encoded_target.append(self.key[target_type][token])
+#                 encoded_interv.append(intv)
+#             target, interv = encoded_target, encoded_interv
+#
+#         if skew is not None:
+#             interv = [(start * skew, stop * skew) for start, stop in interv]
+#
+#         return torch.tensor(target), interv
+#
+#
+# class MultiSymmetricTokenDataset(MultiAnnotatedDataset):
+#     def __init__(
+#         self,
+#         sounds,
+#         annotations,
+#         vocabulary,
+#         *,
+#         base_rate="moderate",
+#         context=6,
+#         alignment="center",
+#         scale_factor=np.sqrt(2),
+#         # filter_vocab=True,
+#         label_sr=100,
+#         **kwargs,
+#     ):
+#         assert base_rate in [
+#             "fast",
+#             "moderate",
+#             "slow",
+#             "no_ext",
+#             "any",
+#             "c10",
+#             "c20",
+#             "c30",
+#             "c50",
+#             "c90",
+#             "c95",
+#         ]
+#         assert alignment in ["left", "center", "right"]
+#
+#         filename = "librispeech-statistics-words.npy"
+#         if os.path.exists(filename):
+#             stats = np.load(filename, allow_pickle=True).item()
+#         elif os.path.exists(os.path.join("stats", filename)):
+#             stats = np.load(os.path.join("stats", filename), allow_pickle=True).item()
+#         else:
+#             raise RuntimeError(f'Unit statistic file "{filename}" not found.')
+#         lengths = dict()
+#         for k, length in zip(stats["identity"], stats["length"]):
+#             if k in lengths:
+#                 lengths[k].append(length)
+#             else:
+#                 lengths[k] = [length]
+#
+#         alpha = 0.9
+#         max_stretch = scale_factor**2
+#         var_range = {
+#             "fast": (0.05, 0.15),
+#             "moderate": (0.45, 0.55),
+#             "slow": (0.85, 0.95),
+#             "no_ext": (0.05, 0.95),
+#             "any": (0.00, 1.00),
+#             "c10": (0.45, 0.55),
+#             "c20": (0.4, 0.6),
+#             "c30": (0.35, 0.65),
+#             "c50": (0.25, 0.75),
+#             "c90": (0.05, 0.95),
+#             "c95": (0.025, 0.975),
+#         }[base_rate]
+#         anchor_vocabulary = [
+#             k
+#             for k, length in lengths.items()
+#             if (vocabulary["words"] is None or k in vocabulary["words"])
+#             and len(length) >= 100
+#             and (
+#                 np.quantile(length, 0.5 + alpha / 2)
+#                 / np.quantile(length, 0.5 - alpha / 2)
+#                 >= max_stretch
+#             )
+#         ]
+#         acc_range = {
+#             k: (
+#                 np.quantile(lengths[k], var_range[0]),
+#                 np.quantile(lengths[k], var_range[1]),
+#             )
+#             for k in anchor_vocabulary
+#         }
+#
+#         super().__init__(sounds, annotations, vocabulary, **kwargs)
+#         self.base_rate = base_rate
+#         self.context = context
+#         self.alignment = alignment
+#         self.scale_factor = scale_factor
+#         self.var_range = var_range
+#         self.acc_range = acc_range
+#         self.label_sr = label_sr
+#         self.anchor_vocabulary = anchor_vocabulary
+#
+#     def __getitem__(self, idx: int, waveform: bool = False):
+#         x, p, s, w = super().__getitem__(idx, waveform=waveform)
+#         out_sr = self.in_sr if waveform or self.audio_transform is None else self.out_sr
+#         if x is None:
+#             return (None,) * 5
+#
+#         anchors = [
+#             (tok, intv)
+#             for tok, intv in zip(*w)
+#             if self.vocabulary["words"][tok] in self.anchor_vocabulary
+#             and self.acc_range[self.vocabulary["words"][tok]][0] <= intv[1] - intv[0]
+#             and intv[1] - intv[0] <= self.acc_range[self.vocabulary["words"][tok]][1]
+#         ]
+#         if len(anchors) == 0:
+#             return (None,) * 5
+#
+#         y, intervals = zip(*anchors)
+#
+#         y_len = int(len(x) / out_sr * self.label_sr)
+#         p_vec = torch.zeros(y_len, dtype=torch.int)
+#         s_vec = torch.zeros(y_len, dtype=torch.int)
+#         w_vec = torch.zeros(y_len, dtype=torch.int)
+#         for tok, (start, stop) in zip(*p):
+#             p_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
+#         for tok, (start, stop) in zip(*s):
+#             s_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
+#         for tok, (start, stop) in zip(*w):
+#             w_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
+#
+#         x_intervals = [
+#             (int(start * out_sr), int(stop * out_sr)) for start, stop in intervals
+#         ]
+#         y_intervals = [
+#             (int(start * self.label_sr), int(stop * self.label_sr))
+#             for start, stop in intervals
+#         ]
+#
+#         # x_durations = [stop - start for start, stop in x_intervals]
+#         # y_durations = [stop - start for start, stop in y_intervals]
+#
+#         x_centers = [(start + stop) // 2 for start, stop in x_intervals]
+#         y_centers = [(start + stop) // 2 for start, stop in y_intervals]
+#
+#         x_context = int(self.context * out_sr)
+#         y_context = int(self.context * self.label_sr)
+#
+#         x_pre_context, x_post_context = (
+#             math.floor(x_context / 2),
+#             math.ceil(x_context / 2),
+#         )
+#         y_pre_context, y_post_context = (
+#             math.floor(y_context / 2),
+#             math.ceil(y_context / 2),
+#         )
+#
+#         x_intervals = [
+#             (center - x_pre_context, center + x_post_context) for center in x_centers
+#         ]
+#         y_intervals = [
+#             (center - y_pre_context, center + y_post_context) for center in y_centers
+#         ]
+#
+#         anchors = [
+#             (token, x_intv, y_intv)
+#             for token, x_intv, y_intv in zip(y, x_intervals, y_intervals)
+#             if x_intv[0] >= 0
+#             and x_intv[1] <= len(x)
+#             and y_intv[0] >= 0
+#             and y_intv[1] <= y_len
+#         ]
+#         if len(anchors) == 0:
+#             return (None,) * 5
+#         y, x_intervals, y_intervals = zip(*anchors)
+#
+#         x = [x[start:stop] for start, stop in x_intervals]
+#         p = [p_vec[start:stop] for start, stop in y_intervals]
+#         s = [s_vec[start:stop] for start, stop in y_intervals]
+#         w = [w_vec[start:stop] for start, stop in y_intervals]
+#         nonempty = [len(_) > 0 for _ in x]
+#         if len(nonempty) == 0:
+#             return (None,) * 5
+#
+#         x = torch.stack(x)[nonempty]
+#         y = torch.tensor(y)[nonempty]
+#         p = torch.stack(p)[nonempty]
+#         s = torch.stack(s)[nonempty]
+#         w = torch.stack(w)[nonempty]
+#
+#         return x, y, p, s, w
+#
+#     def iterator(
+#         self,
+#         batch_size: int = 1,
+#         shuffle: bool = False,
+#         num_workers: int = 0,
+#         # flat_labels=False
+#     ):
+#         def collate_fn(xpsw):
+#             xs, ys, ps, ss, ws = zip(*xpsw)
+#             if any(y is None for y in ys):
+#                 return (None,) * 5
+#
+#             xs = np.concatenate(xs, axis=0)
+#             ys = np.concatenate(ys, axis=0)
+#             ps = np.concatenate(ps, axis=0)
+#             ss = np.concatenate(ss, axis=0)
+#             ws = np.concatenate(ws, axis=0)
+#
+#             xs = torch.as_tensor(xs)
+#             ys = torch.as_tensor(ys)
+#             ps = torch.as_tensor(ps)
+#             ss = torch.as_tensor(ss)
+#             ws = torch.as_tensor(ws)
+#
+#             if not self.batch_first:
+#                 xs = xs.transpose(0, 1).contiguous()
+#                 ys = ys.transpose(0, 1).contiguous()
+#                 ps = ps.transpose(0, 1).contiguous()
+#                 ss = ss.transpose(0, 1).contiguous()
+#                 ws = ws.transpose(0, 1).contiguous()
+#
+#             return xs, ys, ps, ss, ws
+#
+#         return torch.utils.data.DataLoader(
+#             self,
+#             batch_size=batch_size,
+#             shuffle=shuffle,
+#             num_workers=num_workers,
+#             collate_fn=collate_fn,
+#         )
+#
+#     def take(
+#         self,
+#         n=int(1e9),
+#         shuffle=False,
+#         batch_size=1,
+#         num_workers=0,
+#         max_token_per_word=None,
+#         return_labels=True,
+#     ):
+#         token_per_word = dict()
+#         xs, ys, ps, ss, ws = [], [], [], [], []
+#
+#         pbar = tqdm(range(n))
+#         it = iter(
+#             self.iterator(
+#                 shuffle=shuffle, batch_size=batch_size, num_workers=num_workers
+#             )
+#         )
+#         while len(xs) < n:
+#             try:
+#                 x, y, p, s, w = next(it)
+#             except StopIteration:
+#                 break
+#
+#             if x is None or y is None:
+#                 continue
+#
+#             batch_count = 0
+#             for xi, yi, pi, si, wi in zip(x, y, p, s, w):
+#                 yi = yi.item()
+#                 if yi not in token_per_word:
+#                     token_per_word[yi] = 0
+#
+#                 if (
+#                     max_token_per_word is None
+#                     or token_per_word[yi] < max_token_per_word
+#                 ):
+#                     xs.append(xi)
+#                     ys.append(yi)
+#                     ps.append(pi)
+#                     ss.append(si)
+#                     ws.append(wi)
+#                     token_per_word[yi] += 1
+#                     batch_count += 1
+#
+#             pbar.update(batch_count)
+#
+#         xs = torch.stack(xs, dim=0)[:n]
+#         ys = (
+#             np.array([self.vocabulary["words"][y] for y in ys])[:n]
+#             if return_labels
+#             else torch.tensor(ys)[:n]
+#         )
+#         ps = torch.stack(ps)[:n]
+#         ss = torch.stack(ss)[:n]
+#         ws = torch.stack(ws)[:n]
+#
+#         return xs, ys, ps, ss, ws
+#
 
 def _pad_axis(array: Tensor, pre: int = 0, post: int = 0, axis: int = 0) -> Tensor:
     pre, post = max(pre, 0), max(post, 0)
