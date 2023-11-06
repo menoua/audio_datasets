@@ -1520,6 +1520,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
         max_token_per_word=None,
         return_labels=True,
     ):
+        raise NotImplementedError()
         token_per_word = dict()
         xs, ys = [], []
 
