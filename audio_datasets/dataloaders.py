@@ -13,17 +13,18 @@ class LibriSpeechDataloader:
         dataset_type=AnnotatedDataset,
         target: str = "words",
         labels: Optional[list[str]] = None,
-        limits: Limits = LIMITS_WORD["librispeech"]["max"],
+        limits: Optional[Limits] = LIMITS_WORD["librispeech"]["max"],
         batch_size: int = 12,
         num_workers: int = 4,
         flat_labels: bool = False,
         batch_first: bool = True,
-        audio_proc: Optional[Callable] = mel_spectrogram(),
-        augment_speech: bool = False,
-        augment_room: bool = False,
-        augment_channel: bool = True,
-        augment_scene: list[str] = [],  # NonSpeech(),
-        augment_mix_n: int = 1,
+        audio_transform: Optional[Callable] = mel_spectrogram(),
+        mod_speech: bool = False,
+        mod_room: bool = False,
+        mod_channel: bool = False,
+        mod_scene: list[str] = [],  # NonSpeech(),
+        mod_foreground: Optional[Callable] = None,
+        mod_final: Optional[Callable] = None,
         mod_intensity: str = "mid",
     ):
         if labels is None:
@@ -37,67 +38,99 @@ class LibriSpeechDataloader:
         sounds["test"], annots["test"] = LibriSpeech(subset="test-clean")
         self.sounds, self.annots = sounds, annots
 
-        self.data_cfg = {
+        self.data_config = {
             "batch_first": batch_first,
             "target": target,
             "vocabulary": labels,
             "limits": limits,
-            "audio_proc": audio_proc,
+            "audio_transform": audio_transform,
             "normalize": len([w for w in labels if "|" in w]) > 0,
         }
 
-        self.augment_cfg = {
-            "speech": augment_speech,
-            "room": augment_room,
-            "channel": augment_channel,
-            "scene": augment_scene,
-            "mix_n": augment_mix_n,
+        self.mod_config = {
+            "mod_speech": mod_speech,
+            "mod_room": mod_room,
+            "mod_channel": mod_channel,
+            "mod_scene": mod_scene,
+            "mod_foreground": mod_foreground,
+            "mod_final": mod_final,
             "mod_intensity": mod_intensity,
         }
 
-        self.dataloader_cfg = {
+        self.dataloader_config = {
             "flat_labels": flat_labels,
             "batch_size": batch_size,
             "num_workers": num_workers,
         }
 
     def train_dataloader(
-        self, data_cfg: dict = {}, augment_cfg: dict = {}, dataloader_cfg: dict = {}
+        self,
+        data_config: dict = {},
+        mod_config: dict = {},
+        dataloader_config: dict = {},
     ):
-        data_cfg = {**self.data_cfg, **data_cfg}
+        data_config = {**self.data_config, **data_config}
         dataset = self.dataset_type(
-            self.sounds["train"], self.annots["train"], **data_cfg
+            self.sounds["train"], self.annots["train"], **data_config
         )
 
-        augment_cfg = {**self.augment_cfg, **augment_cfg}
-        dataset.augment(**augment_cfg)
+        mod_config = {**self.mod_config, **mod_config}
+        dataset.augment(**mod_config)
 
-        dataloader_cfg = {**self.dataloader_cfg, "shuffle": True, **dataloader_cfg}
-        return dataset.iterator(**dataloader_cfg)
-
-    def val_dataloader(self, data_cfg: dict = {}, dataloader_cfg: dict = {}):
-        data_cfg = {**self.data_cfg, **data_cfg}
-        dataset = self.dataset_type(self.sounds["val"], self.annots["val"], **data_cfg)
-
-        dataloader_cfg = {**self.dataloader_cfg, "shuffle": False, **dataloader_cfg}
-        dataloader_cfg = {
-            **dataloader_cfg,
-            "batch_size": max(dataloader_cfg["batch_size"] // 2, 1),
+        dataloader_config = {
+            **self.dataloader_config,
+            "shuffle": True,
+            **dataloader_config,
         }
-        return dataset.iterator(**dataloader_cfg)
+        return dataset.iterator(**dataloader_config)
 
-    def test_dataloader(self, data_cfg: dict = {}, dataloader_cfg: dict = {}):
-        data_cfg = {**self.data_cfg, **data_cfg}
+    def val_dataloader(
+        self,
+        data_config: dict = {},
+        mod_config: dict = {},
+        dataloader_config: dict = {},
+    ):
+        data_config = {**self.data_config, **data_config}
         dataset = self.dataset_type(
-            self.sounds["test"], self.annots["test"], **data_cfg
+            self.sounds["val"], self.annots["val"], **data_config
         )
 
-        dataloader_cfg = {**self.dataloader_cfg, "shuffle": False, **dataloader_cfg}
-        dataloader_cfg = {
-            **dataloader_cfg,
-            "batch_size": max(dataloader_cfg["batch_size"] // 2, 1),
+        dataset.augment(**mod_config)
+
+        dataloader_config = {
+            **self.dataloader_config,
+            "shuffle": False,
+            **dataloader_config,
         }
-        return dataset.iterator(**dataloader_cfg)
+        dataloader_config = {
+            **dataloader_config,
+            "batch_size": max(dataloader_config["batch_size"] // 2, 1),
+        }
+        return dataset.iterator(**dataloader_config)
+
+    def test_dataloader(
+        self,
+        data_config: dict = {},
+        mod_config: dict = {},
+        dataloader_config: dict = {},
+    ):
+        data_config = {**self.data_config, **data_config}
+        dataset = self.dataset_type(
+            self.sounds["test"], self.annots["test"], **data_config
+        )
+
+        dataset.augment(**mod_config)
+
+        dataloader_config = {
+            **self.dataloader_config,
+            "shuffle": False,
+            **dataloader_config,
+        }
+        dataloader_config = {
+            **dataloader_config,
+            "batch_size": max(dataloader_config["batch_size"] // 2, 1),
+        }
+        return dataset.iterator(**dataloader_config)
 
 
 class LibriSpeechSequenceDataloader(LibriSpeechDataloader):
@@ -115,8 +148,8 @@ class LibriSpeechSequenceDataloader(LibriSpeechDataloader):
         super().__init__(dataset_type=dataset_type, **kwargs)
         self.seq_per_sample = seq_per_sample
 
-        self.data_cfg = {
-            **self.data_cfg,
+        self.data_config = {
+            **self.data_config,
             "seq_size": seq_size,
             "seq_min": seq_min,
             "seq_time": seq_time,
@@ -125,48 +158,71 @@ class LibriSpeechSequenceDataloader(LibriSpeechDataloader):
         }
 
     def train_dataloader(
-        self, data_cfg: dict = {}, augment_cfg: dict = {}, dataloader_cfg: dict = {}
+        self,
+        data_config: dict = {},
+        mod_config: dict = {},
+        dataloader_config: dict = {},
     ):
-        dataloader_cfg = {**self.dataloader_cfg, **dataloader_cfg}
-        dataloader_cfg = {
-            **dataloader_cfg,
-            "batch_max": int(dataloader_cfg["batch_size"] * self.seq_per_sample),
+        dataloader_config = {**self.dataloader_config, **dataloader_config}
+        dataloader_config = {
+            **dataloader_config,
+            "batch_max": int(dataloader_config["batch_size"] * self.seq_per_sample),
         }
         return super().train_dataloader(
-            data_cfg=data_cfg, augment_cfg=augment_cfg, dataloader_cfg=dataloader_cfg
+            data_config=data_config,
+            mod_config=mod_config,
+            dataloader_config=dataloader_config,
         )
 
-    def val_dataloader(self, data_cfg: dict = {}, dataloader_cfg: dict = {}):
-        dataloader_cfg = {**self.dataloader_cfg, **dataloader_cfg}
-        dataloader_cfg = {
-            **dataloader_cfg,
-            "batch_max": int(dataloader_cfg["batch_size"] * self.seq_per_sample),
+    def val_dataloader(
+        self,
+        data_config: dict = {},
+        mod_config: dict = {},
+        dataloader_config: dict = {},
+    ):
+        dataloader_config = {**self.dataloader_config, **dataloader_config}
+        dataloader_config = {
+            **dataloader_config,
+            "batch_max": int(dataloader_config["batch_size"] * self.seq_per_sample),
         }
-        return super().val_dataloader(data_cfg=data_cfg, dataloader_cfg=dataloader_cfg)
+        return super().val_dataloader(
+            data_config=data_config,
+            mod_config=mod_config,
+            dataloader_config=dataloader_config,
+        )
 
-    def test_dataloader(self, data_cfg: dict = {}, dataloader_cfg: dict = {}):
-        dataloader_cfg = {**self.dataloader_cfg, **dataloader_cfg}
-        dataloader_cfg = {
-            **dataloader_cfg,
-            "batch_max": int(dataloader_cfg["batch_size"] * self.seq_per_sample),
+    def test_dataloader(
+        self,
+        data_config: dict = {},
+        mod_config: dict = {},
+        dataloader_config: dict = {},
+    ):
+        dataloader_config = {**self.dataloader_config, **dataloader_config}
+        dataloader_config = {
+            **dataloader_config,
+            "batch_max": int(dataloader_config["batch_size"] * self.seq_per_sample),
         }
-        return super().test_dataloader(data_cfg=data_cfg, dataloader_cfg=dataloader_cfg)
+        return super().test_dataloader(
+            data_config=data_config,
+            mod_config=mod_config,
+            dataloader_config=dataloader_config,
+        )
 
 
 class LibriSpeechTokenDataloader(LibriSpeechDataloader):
     def __init__(self, dataset_type=TokenizedDataset, **kwargs):
         super().__init__(dataset_type=dataset_type, **kwargs)
-        self.data_cfg = {**self.data_cfg}
+        self.data_config = {**self.data_config}
 
 
 def librispeech(
     target: str = "words",
     vocabulary: Optional[list[str]] = None,
-    limits: Limits = LIMITS_WORD["librispeech"]["max"],
+    limits: Optional[Limits] = LIMITS_WORD["librispeech"]["max"],
     batch_size: int = 12,
     num_workers: int = 4,
     flat_labels: bool = False,
-    audio_proc: Optional[Callable] = mel_spectrogram(),
+    audio_transform: Optional[Callable] = mel_spectrogram(),
     split: str = "val",
 ):
     sounds, annots = {}, {}
@@ -180,22 +236,21 @@ def librispeech(
         "target": target,
         "vocabulary": vocabulary,
         "limits": limits,
-        "audio_proc": audio_proc,
+        "audio_transform": audio_transform,
         "normalize": len([w for w in vocabulary if "|" in w]) > 0,
     }
 
-    augment_config = {
-        "speech": True,
-        "room": False,
-        "channel": True,
-        "scene": NonSpeech(),
-        "mix_n": 1,
+    mod_config = {
+        "mod_speech": True,
+        "mod_room": False,
+        "mod_channel": True,
+        "mod_scene": NonSpeech(),
         "mod_intensity": "mid",
     }
 
     if split == "train":
         dataset = AnnotatedDataset(sounds["train"], annots["train"], **data_config)
-        dataset.augment(**augment_config)
+        dataset.augment(**mod_config)
         return dataset.iterator(
             shuffle=True,
             flat_labels=flat_labels,
@@ -231,7 +286,7 @@ def librispeech_sequence(
     batch_size: int = 12,
     seq_per_sample: float = 4.0,
     num_workers: int = 4,
-    audio_proc: Optional[Callable] = mel_spectrogram(),
+    audio_transform: Optional[Callable] = mel_spectrogram(),
     split: str = "val",
 ):
     sounds, annots = {}, {}
@@ -247,16 +302,15 @@ def librispeech_sequence(
         "seq_size": seq_size,
         "seq_min": seq_min,
         "block_size": block_size,
-        "audio_proc": audio_proc,
+        "audio_transform": audio_transform,
         "normalize": len([w for w in vocabulary if "|" in w]) > 0,
     }
 
-    augment_config = {
-        "speech": False,
-        "room": False,
-        "channel": True,
-        "scene": NonSpeech(),
-        "mix_n": 1,
+    mod_config = {
+        "mod_speech": False,
+        "mod_room": False,
+        "mod_channel": True,
+        "mod_scene": NonSpeech(),
         "mod_intensity": "mid",
     }
 
@@ -266,7 +320,7 @@ def librispeech_sequence(
         dataset = SequenceDataset(
             sounds["train"], annots["train"], return_clean=True, **data_config
         )
-        dataset.augment(**augment_config)
+        dataset.augment(**mod_config)
         return dataset.iterator(
             shuffle=True,
             batch_size=batch_size,
@@ -299,7 +353,7 @@ def librispeech_token(
     limits: Limits = LIMITS_WORD["librispeech"]["max"],
     batch_size: int = 12,
     num_workers: int = 4,
-    audio_proc: Optional[Callable] = mel_spectrogram(),
+    audio_transform: Optional[Callable] = mel_spectrogram(),
     split: str = "val",
 ):
     sounds, annots = {}, {}
@@ -313,22 +367,21 @@ def librispeech_token(
         "vocabulary": vocabulary,
         "batch_first": True,
         "limits": limits,
-        "audio_proc": audio_proc,
+        "audio_transform": audio_transform,
         "normalize": len([w for w in vocabulary if "|" in w]) > 0,
     }
 
-    augment_config = {
-        "speech": True,
-        "room": False,
-        "channel": True,
-        "scene": NonSpeech(),
-        "mix_n": 1,
+    mod_config = {
+        "mod_speech": True,
+        "mod_room": False,
+        "mod_channel": True,
+        "mod_scene": NonSpeech(),
         "mod_intensity": "mid",
     }
 
     if split == "train":
         dataset = TokenizedDataset(sounds["train"], annots["train"], **data_config)
-        dataset.augment(**augment_config)
+        dataset.augment(**mod_config)
         return dataset.iterator(
             shuffle=True, batch_size=batch_size, num_workers=num_workers
         )
