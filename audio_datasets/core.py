@@ -237,36 +237,23 @@ class SoundDataset(torch.utils.data.Dataset):
 
         return self
 
-    def annotate(
+    def augment(
         self,
-        annotations: list[str],
-        vocabulary: list[str],
-        target: str,
-        *,
-        value_nil: int = 0,
-        ignore_silence: bool = True,
-        normalize: bool = False,
+        mod_speech: bool = False,
+        mod_room: bool = False,
+        mod_channel: bool = False,
+        mod_scene: list[str] = [],
+        mod_foreground: Optional[Callable] = None,
+        mod_final: Optional[Callable] = None,
+        mod_intensity: str = "low",
     ):
-        return AnnotatedDataset(
-            self.sounds,
-            annotations,
-            vocabulary,
-            target,
-            value_nil=value_nil,
-            normalize=normalize,
-            ignore_silence=ignore_silence,
-            in_sr=self.in_sr,
-            audio_transform=self.audio_transform,
-            limits=self.limits,
-            mod_speech=self.mod_speech,
-            mod_room=self.mod_room,
-            mod_channel=self.mod_channel,
-            mod_scene=self.mod_scene,
-            mod_foreground=self.mod_foreground,
-            mod_final=self.mod_final,
-            mod_intensity=self.mod_intensity,
-            batch_first=self.batch_first,
-        )
+        self.mod_speech = mod_speech
+        self.mod_room = mod_room
+        self.mod_channel = mod_channel
+        self.mod_scene = mod_scene
+        self.mod_foreground = mod_foreground
+        self.mod_final = mod_final
+        self.mod_intensity = mod_intensity
 
     def iterator(
         self,
