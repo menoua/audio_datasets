@@ -54,34 +54,29 @@ CONFIG_MOD_HI = {
 }
 
 
-def add_speech_modifier(
-    tfm: list[list[str]], sr: int, config: dict = CONFIG_MOD_MID
-) -> list[list[str]]:
+def apply_speech_modifier(
+    audio: Tensor, sr: int, config: dict = CONFIG_MOD_MID
+) -> tuple[Tensor, int]:
     fx = np.random.choice(("pitch", "speed", "tempo"))
 
     if fx == "pitch":
         n_semitones = np.random.uniform(*config["PITCH_SHIFT"])
-        tfm.append(["pitch", str(n_semitones)])
-        tfm.append(["rate", str(sr)])
+        tfm = [["pitch", str(n_semitones)], ["rate", str(sr)]]
     elif fx == "speed":
         factor = np.random.uniform(*config["SPEED_RATE"])
-        tfm.append(["speed", str(factor)])
-        tfm.append(["rate", str(sr)])
+        tfm = [["speed", str(factor)], ["rate", str(sr)]]
     elif fx == "tempo":
         factor = np.random.uniform(*config["TEMPO_RATE"])
-        # if 0.9 < factor < 1.1:
-        #    tfm.append(['stretch', str(1/factor)])
-        # else:
-        #    tfm.append(['tempo', '-s', str(factor)])
-        tfm.append(["tempo", "-s", str(factor)])
-        tfm.append(["rate", str(sr)])
+        tfm = [["tempo", "-s", str(factor)], ["rate", str(sr)]]
+    else:
+        raise RuntimeError("Reached unreachable state")
 
-    return tfm
+    return apply_sox_effects(audio, sr, tfm)
 
 
-def add_room_modifier(
-    tfm: list[list[str]], config: dict = CONFIG_MOD_MID
-) -> list[list[str]]:
+def apply_room_modifier(
+    audio: Tensor, sr: int, config: dict = CONFIG_MOD_MID
+) -> tuple[Tensor, int]:
     # fx = np.random.choice(('chorus', 'echo', 'reverb'))
     fx = np.random.choice(("reverb",))
 
@@ -92,7 +87,7 @@ def add_room_modifier(
         speeds = np.random.uniform(0.2, 0.4, n_voices)
         depths = np.random.uniform(1.0, 3.0, n_voices)
         modulations = np.random.choice(("s", "t"), n_voices)
-        tfm.append(
+        tfm = [
             [
                 "chorus",
                 str(0.8 - n_voices * 0.1),
@@ -105,57 +100,67 @@ def add_room_modifier(
                     [],
                 ),
             ]
-        )
+        ]
     elif fx == "echo":
         n_echos = np.random.randint(*config["ECHO_N"])
         max_delay = np.random.randint(50, 300)
         delays = list(np.linspace(0, max_delay, n_echos + 1))[1:]
         min_decay = np.random.uniform(0.1, 0.7)
         decays = list(np.linspace(1, min_decay, n_echos + 1))[1:]
-        tfm.append(
+        tfm = [
             [
                 "echo",
                 "0.8",
                 "0.9",
                 *sum([[str(_) for _ in i] for i in zip(delays, decays)], []),
             ]
-        )
+        ]
     elif fx == "reverb":
         reverberance = np.random.uniform(*config["REVERB"])
         room_scale = np.random.uniform(50, 100)
-        tfm.append(["reverb", "--wet-only", str(reverberance), "50", str(room_scale)])
-        tfm.append(["channels", "1"])
+        tfm = [
+            ["reverb", "--wet-only", str(reverberance), "50", str(room_scale)],
+            ["channels", "1"],
+        ]
+    else:
+        raise RuntimeError("Reached unreachable state")
 
-    return tfm
+    return apply_sox_effects(audio, sr, tfm)
 
 
-def add_channel_modifier(
-    tfm: list[list[str]], config: dict = CONFIG_MOD_MID
-) -> list[list[str]]:
+def apply_channel_modifier(
+    audio: Tensor, sr: int, config: dict = CONFIG_MOD_MID
+) -> tuple[Tensor, int]:
     fx = np.random.choice(("lowpass", "highpass", "bandpass", "bandstop"))
 
     if fx == "lowpass":
         cutoff_freq = np.random.uniform(*config["LOWPASS_F"])
-        tfm.append(["sinc", "-" + str(cutoff_freq)])
+        tfm = [["sinc", "-" + str(cutoff_freq)]]
     elif fx == "highpass":
         cutoff_freq = np.random.uniform(*config["HIGHPASS_F"])
-        tfm.append(["sinc", str(cutoff_freq)])
+        tfm = [["sinc", str(cutoff_freq)]]
     elif fx == "bandpass":
         cutoff_low = np.random.uniform(*config["BANDPASS_F"])
         cutoff_high = cutoff_low * np.random.uniform(*config["BANDPASS_W"])
-        tfm.append(["sinc", str(cutoff_low) + "-" + str(cutoff_high)])
+        tfm = [["sinc", str(cutoff_low) + "-" + str(cutoff_high)]]
     elif fx == "bandstop":
         cutoff_low = np.random.uniform(*config["BANDSTOP_F"])
         cutoff_high = cutoff_low * np.random.uniform(*config["BANDSTOP_W"])
-        tfm.append(["sinc", str(cutoff_high) + "-" + str(cutoff_low)])
+        tfm = [["sinc", str(cutoff_high) + "-" + str(cutoff_low)]]
+    else:
+        raise RuntimeError("Reached unreachable state")
 
-    return tfm
+    return apply_sox_effects(audio, sr, tfm)
 
 
-def add_noise_modifier(
-    audio: Tensor, sr: int, noise_path: str, config: dict = CONFIG_MOD_MID
-):
-    noise_audio, noise_sr = load_audio(noise_path)
+def apply_noise_modifier(
+    audio: Tensor, sr: int, noise_sounds: list[str], config: dict = CONFIG_MOD_MID
+) -> tuple[Tensor, int]:
+    if not noise_sounds:
+        return audio, sr
+
+    noise_id = np.random.choice(len(noise_sounds))
+    noise_audio, noise_sr = load_audio(noise_sounds[noise_id])
 
     tfm = [["rate", str(sr)], ["channels", "1"]]
     # repeat to cover full speech
@@ -168,10 +173,13 @@ def add_noise_modifier(
     # set volume
     snr_db = np.random.uniform(*config["BG_SNR"])
     tfm.append(["norm", str(-3 - snr_db)])
-    # process audio
+    # process noise and add to foreground
     noise_audio, noise_sr = apply_sox_effects(noise_audio, noise_sr, tfm)
-
     audio = (audio + noise_audio[:, : audio.shape[1]]) / np.sqrt(2)
-    audio, sr = apply_sox_effects(audio, sr, [["norm", "-3"]])
 
     return audio, sr
+
+
+def apply_fixed_tempo(audio: Tensor, sr: int, factor: float) -> tuple[Tensor, int]:
+    tfm = [["tempo", "-s", str(factor)], ["rate", str(sr)]]
+    return apply_sox_effects(audio, sr, tfm)

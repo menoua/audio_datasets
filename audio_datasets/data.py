@@ -10,25 +10,31 @@ from . import ROOT_DATA_DIR
 UNIFORM_FORMAT = True
 
 
-def _ufmt(filename):
+def _ufmt(filename: str) -> str:
     base, fmt = filename.rsplit(".", maxsplit=1)
     return ".".join((base, "flac" if UNIFORM_FORMAT else fmt))
 
 
-def LibriSpeech(basepath=ROOT_DATA_DIR + "/LibriSpeech", subset="train-*"):
+def LibriSpeech(
+    basepath=ROOT_DATA_DIR + "/LibriSpeech", subset="train-*"
+) -> tuple[list[str], list[str]]:
     annotations = glob.glob(basepath + "/" + subset + "/*/*/*.TextGrid")
     sounds = [_ufmt(path.replace(".TextGrid", ".flac")) for path in annotations]
     annotations = ["libri:" + path for path in annotations]
     return sounds, annotations
 
 
-def SpokenWikiEnglish(basepath=ROOT_DATA_DIR + "/SWC_English"):
+def SpokenWikiEnglish(
+    basepath=ROOT_DATA_DIR + "/SWC_English",
+) -> tuple[list[str], list[str]]:
     sounds = glob.glob(_ufmt(basepath + "/*/audio.ogg"))
     annotations = ["swc:" + path.replace("audio.ogg", "aligned.swc") for path in sounds]
     return sounds, annotations
 
 
-def TedLium3(basepath=ROOT_DATA_DIR + "/TEDLIUM_release-3"):
+def TedLium3(
+    basepath=ROOT_DATA_DIR + "/TEDLIUM_release-3",
+) -> tuple[list[str], list[str]]:
     sounds = glob.glob(_ufmt(basepath + "/data/sph/*.sph"))
     annotations = [
         "tedlium:" + re.sub("/sph/(.*).sph", "/stm/\\1.stm", path) for path in sounds
@@ -36,11 +42,11 @@ def TedLium3(basepath=ROOT_DATA_DIR + "/TEDLIUM_release-3"):
     return sounds, annotations
 
 
-def SynthNoise(basepath=ROOT_DATA_DIR + "/SynthNoise"):
+def SynthNoise(basepath=ROOT_DATA_DIR + "/SynthNoise") -> list[str]:
     return glob.glob(_ufmt(basepath + "/pink_*.wav"))
 
 
-def FMA(basepath=ROOT_DATA_DIR + "/FMA"):
+def FMA(basepath=ROOT_DATA_DIR + "/FMA") -> list[str]:
     # Remove [ 080391 , 106628 ] -- corrupt?
     blacklist = [80391, 106628]
 
@@ -63,11 +69,11 @@ def FMA(basepath=ROOT_DATA_DIR + "/FMA"):
     ]
 
 
-def ESC50(basepath=ROOT_DATA_DIR + "/ESC-50-master"):
+def ESC50(basepath=ROOT_DATA_DIR + "/ESC-50-master") -> list[str]:
     return glob.glob(_ufmt(basepath + "/audio/*.wav"))
 
 
-def FSD2019(basepath=ROOT_DATA_DIR + "/FSDKaggle2019"):
+def FSD2019(basepath=ROOT_DATA_DIR + "/FSDKaggle2019") -> list[str]:
     groups = [
         "Accelerating_and_revving_and_vroom",
         "Accordion",
@@ -147,7 +153,7 @@ def FSD2019(basepath=ROOT_DATA_DIR + "/FSDKaggle2019"):
     tracks = [
         table["fname"][i]
         for i in range(len(table))
-        if all(label in groups for label in table["labels"][i].split(","))
+        if all(label in groups for label in table["labels"][i].item().split(","))
     ]
     return [
         _ufmt(f"{basepath}/FSDKaggle2019.audio_train_curated/{track}")
@@ -155,17 +161,19 @@ def FSD2019(basepath=ROOT_DATA_DIR + "/FSDKaggle2019"):
     ]
 
 
-def UrbanSound(basepath=ROOT_DATA_DIR + "/UrbanSound"):
+def UrbanSound(basepath=ROOT_DATA_DIR + "/UrbanSound") -> list[str]:
     return glob.glob(_ufmt(basepath + "/data/*/*.wav")) + glob.glob(
         _ufmt(basepath + "/data/*/*.mp3")
     )
 
 
-def Rouen(basepath=ROOT_DATA_DIR + "/Rouen"):
+def Rouen(basepath=ROOT_DATA_DIR + "/Rouen") -> list[str]:
     return glob.glob(_ufmt(basepath + "/*.wav"))
 
 
-def TAU2019(basepath=ROOT_DATA_DIR + "/TAU-urban-acoustic-scenes-2019-development"):
+def TAU2019(
+    basepath=ROOT_DATA_DIR + "/TAU-urban-acoustic-scenes-2019-development",
+) -> list[str]:
     return glob.glob(_ufmt(basepath + "/audio/*.wav"))
 
 
@@ -181,37 +189,31 @@ def TAU2019(basepath=ROOT_DATA_DIR + "/TAU-urban-acoustic-scenes-2019-developmen
 #     return []
 
 
-def Speech(nested=False):
-    if nested:
-        return [LibriSpeech(), SpokenWikiEnglish(), TedLium3()]
-    else:
-        lib = LibriSpeech()
-        swc = SpokenWikiEnglish()
-        ted = TedLium3()
-        return lib[0] + swc[0] + ted[0], lib[1] + swc[1] + ted[1]
+def NestedSpeech() -> list[tuple[list[str], list[str]]]:
+    return [LibriSpeech(), SpokenWikiEnglish(), TedLium3()]
 
 
-def NonSpeech(nested=False):
-    if nested:
-        return [
-            SynthNoise(),
-            FMA(),
-            ESC50(),
-            FSD2019(),
-            UrbanSound(),
-            Rouen(),
-            TAU2019(),
-        ]
-    else:
-        return (
-            SynthNoise()
-            + FMA()
-            + ESC50()
-            + FSD2019()
-            + UrbanSound()
-            + Rouen()
-            + TAU2019()
-        )
+def Speech() -> tuple[list[str], list[str]]:
+    sounds, annotations = zip(*NestedSpeech())
+    sounds = sum(sounds, [])
+    annotations = sum(annotations, [])
+    return sounds, annotations
+
+
+def NestedNonSpeech() -> list[list[str]]:
+    return [
+        SynthNoise(),
+        FMA(),
+        ESC50(),
+        FSD2019(),
+        UrbanSound(),
+        Rouen(),
+        TAU2019(),
+    ]
+
+
+def NonSpeech() -> list[str]:
+    return sum(NestedNonSpeech(), [])
 
 
 # MedleyDB problematics

@@ -15,9 +15,8 @@ from torchaudio.sox_effects import apply_effects_tensor as apply_sox_effects
 from tqdm import tqdm
 
 from .augments import (CONFIG_MOD_HI, CONFIG_MOD_LO, CONFIG_MOD_MID,
-                       add_channel_modifier, add_noise_modifier,
-                       add_room_modifier, add_speech_modifier)
-from .data import NonSpeech
+                       apply_channel_modifier, apply_noise_modifier,
+                       apply_room_modifier, apply_speech_modifier)
 from .lexicon import (is_postfix, is_prefix, is_stressed, is_subtoken,
                       normalize_token, syllabize)
 from .limits import Limits
@@ -117,32 +116,31 @@ class SoundDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         sounds: list[str],
+        *,
         in_sr: int = 16_000,
-        out_sr: int = 100,
-        audio_proc: Optional[Callable] = None,
-        noise_reduce: bool = False,
+        audio_transform: Optional[Callable] = None,
+        limits: Optional[Limits],
         mod_speech: bool = False,
         mod_room: bool = False,
         mod_channel: bool = False,
         mod_scene: list[str] = [],
-        mod_custom: Optional[Callable] = None,
-        mix_augments: int = 1,
+        mod_foreground: Optional[Callable] = None,
+        mod_final: Optional[Callable] = None,
         mod_intensity: str = "low",
         batch_first: bool = True,
     ):
-        self.sounds = sounds
-        self.in_sr = in_sr
-        self.out_sr = out_sr
-        self.noise_reduce = noise_reduce
-        self.mod_speech = mod_speech
-        self.mod_room = mod_room
-        self.mod_channel = mod_channel
-        self.mod_scene = mod_scene
-        self.mod_custom = mod_custom
-        self.mix_augments = mix_augments
+        self.sounds: list[str] = sounds
+        self.in_sr: int = in_sr
+        self.audio_transform: Optional[Callable] = audio_transform
+        self.limits: Optional[Limits] = limits
+        self.mod_speech: bool = mod_speech
+        self.mod_room: bool = mod_room
+        self.mod_channel: bool = mod_channel
+        self.mod_scene: list[str] = mod_scene
+        self.mod_foreground: Optional[Callable] = mod_foreground
+        self.mod_final: Optional[Callable] = mod_final
         self.set_intensity(mod_intensity)
         self.batch_dim = 0 if batch_first else 1
-        self.audio_proc = audio_proc
 
     def __len__(self):
         return len(self.sounds)
@@ -152,92 +150,76 @@ class SoundDataset(torch.utils.data.Dataset):
         in_path = self.sounds[idx]
 
         xforms = []
-        if self.mod_custom:
-            xforms.append("mod_custom")
+        xforms.append("none")
         if self.mod_speech:
             xforms.append("mod_speech")
         if self.mod_room:
             xforms.append("mod_room")
         if self.mod_channel:
             xforms.append("mod_channel")
-        if self.mod_scene:
-            xforms.append("mod_scene")
-        if xforms and self.mix_augments >= 0:
-            xforms = np.random.choice(xforms, size=self.mix_augments, replace=False)
+        fx = np.random.choice(xforms)
+
+        # load and resample audio
+        in_audio, in_sr = load_audio(in_path)
+        in_audio, in_sr = apply_sox_effects(
+            in_audio, in_sr, [["rate", str(self.in_sr)], ["channels", "1"]]
+        )
 
         # process audio using built-in modifiers
-        tfm = [["rate", str(self.in_sr)], ["channels", "1"]]
-        if "mod_speech" in xforms:
-            add_speech_modifier(tfm, self.in_sr, self.mod_config)
-        if "mod_room" in xforms:
-            add_room_modifier(tfm, self.mod_config)
-        if "mod_channel" in xforms:
-            add_channel_modifier(tfm, self.mod_config)
-        in_audio, in_sr = load_audio(in_path)
-        mix_audio, mix_sr = apply_sox_effects(in_audio, in_sr, tfm)
+        mix_audio, mix_sr = in_audio, in_sr
+        if fx == "mod_speech":
+            mix_audio, mix_sr = apply_speech_modifier(in_audio, in_sr, self.mod_config)
+        elif fx == "mod_room":
+            mix_audio, mix_sr = apply_room_modifier(in_audio, in_sr, self.mod_config)
+        elif fx == "mod_channel":
+            mix_audio, mix_sr = apply_channel_modifier(in_audio, in_sr, self.mod_config)
+        else:
+            mix_audio, mix_sr = in_audio, in_sr
 
         # apply custom modification to audio
-        if "mod_custom" in xforms and self.mod_custom:
-            mix_audio, mix_sr = self.mod_custom(mix_audio, mix_sr, self.mod_config)
+        if self.mod_foreground:
+            mix_audio, mix_sr = self.mod_foreground(mix_audio, mix_sr, self.mod_config)
 
         # normalize volume
-        tfm.append(["norm", "-3"])
-        mix_audio, mix_sr = apply_sox_effects(in_audio, in_sr, tfm)
+        mix_audio, mix_sr = apply_sox_effects(mix_audio, mix_sr, [["norm", "-3"]])
 
         # apply additive noise to processed and normalized audio
-        if "mod_scene" in xforms:
-            noise_path = np.random.choice(self.mod_scene)
-            mix_audio, mix_sr = add_noise_modifier(
-                mix_audio, mix_sr, noise_path, self.mod_config
+        if self.mod_scene:
+            mix_audio, mix_sr = apply_noise_modifier(
+                mix_audio, mix_sr, self.mod_scene, self.mod_config
+            )
+            mix_audio, mix_sr = apply_sox_effects(mix_audio, mix_sr, [["norm", "-3"]])
+
+        # apply custom modification to final audio after normalization and noise
+        if self.mod_final:
+            mix_audio, mix_sr = self.mod_final(mix_audio, mix_sr, self.mod_config)
+            mix_audio, mix_sr = apply_sox_effects(mix_audio, mix_sr, [["norm", "-3"]])
+
+        # make sure sampling rate wasn't changed during processing
+        if mix_sr != in_sr:
+            raise RuntimeError(
+                "Changing the audio sampling rate during audio processing is not supported"
             )
 
         # calculate skew
         skew = mix_audio.shape[1] / in_audio.shape[1]
 
         # calculate spectrograms
-        if waveform or self.audio_proc is None:
-            x = mix_audio.T
-            x0 = in_audio.T
-            out_sr = self.in_sr
+        if waveform or self.audio_transform is None:
+            mix_x = mix_audio.T
+            in_x = in_audio.T
+            out_sr = in_sr
         else:
-            x = self.audio_proc(mix_audio)
-            x0 = self.audio_proc(in_audio)
-            out_sr = self.out_sr
+            mix_x = self.audio_transform(mix_audio)
+            in_x = self.audio_transform(in_audio)
+            out_sr = int(in_sr * mix_x.shape[0] / mix_audio.shape[1])
 
         return SoundSample(
-            sound=x,
-            source=x0,
+            sound=mix_x,
+            source=in_x,
             rate=out_sr,
             skew=skew,
         )
-
-    def augment(
-        self,
-        speech: bool = True,
-        room: bool = True,
-        channel: bool = True,
-        scene=None,
-        mix_n: int = 1,
-        mod_intensity: str = "low",
-    ):
-        self.mod_speech = speech
-        self.mod_room = room
-        self.mod_channel = channel
-        self.mod_scene = NonSpeech() if scene is None else scene
-        self.mix_augments = mix_n
-        self.set_intensity(mod_intensity)
-
-        return self
-
-    def speed_up(self, factor: float):
-        def modifier(audio, sr, _):
-            tfm = [["tempo", "-s", str(factor)], ["rate", str(sr)]]
-            audio, sr = apply_sox_effects(audio, sr, tfm)
-            return audio, sr
-
-        self.mod_custom = modifier
-
-        return self
 
     def set_intensity(self, level: str):
         if level in ["low"]:
@@ -260,7 +242,7 @@ class SoundDataset(torch.utils.data.Dataset):
         annotations: list[str],
         vocabulary: list[str],
         target: str,
-        limits: Limits,
+        *,
         value_nil: int = 0,
         ignore_silence: bool = True,
         normalize: bool = False,
@@ -270,20 +252,18 @@ class SoundDataset(torch.utils.data.Dataset):
             annotations,
             vocabulary,
             target,
-            limits=limits,
             value_nil=value_nil,
-            ignore_silence=ignore_silence,
             normalize=normalize,
+            ignore_silence=ignore_silence,
             in_sr=self.in_sr,
-            out_sr=self.out_sr,
-            audio_proc=self.audio_proc,
-            noise_reduce=self.noise_reduce,
+            audio_transform=self.audio_transform,
+            limits=self.limits,
             mod_speech=self.mod_speech,
             mod_room=self.mod_room,
             mod_channel=self.mod_channel,
             mod_scene=self.mod_scene,
-            mod_custom=self.mod_custom,
-            mix_augments=self.mix_augments,
+            mod_foreground=self.mod_foreground,
+            mod_final=self.mod_final,
             mod_intensity=self.mod_intensity,
             batch_first=self.batch_first,
         )
@@ -295,6 +275,9 @@ class SoundDataset(torch.utils.data.Dataset):
         num_workers: int = 0,
         full_tensor: bool = True,
     ):
+        if full_tensor and self.limits is None:
+            raise RuntimeError("Argument full_tensor cannot be set without limits")
+
         def collate_fn(samples: list[SoundSample]) -> Optional[SoundBatch]:
             if not samples or any(s is None for s in samples):
                 return None
@@ -306,8 +289,12 @@ class SoundDataset(torch.utils.data.Dataset):
             x0lens = torch.tensor([len(x0) for x0 in x0s], dtype=torch.int)
 
             out_sr = samples[0].rate
-            max_xlen = int(self.limits.time * out_sr if full_tensor else xlens.max())
-            max_x0len = int(self.limits.time * out_sr if full_tensor else x0lens.max())
+            if full_tensor and self.limits is not None:
+                max_xlen = int(self.limits.time * out_sr)
+                max_x0len = int(self.limits.time * out_sr)
+            else:
+                max_xlen = int(xlens.max())
+                max_x0len = int(x0lens.max())
 
             xs = [_pad_axis(x, 0, max_xlen - len(x), axis=0) for x in xs]
             x0s = [_pad_axis(x0, 0, max_x0len - len(x0), axis=0) for x0 in x0s]
@@ -339,10 +326,10 @@ class AnnotatedDataset(SoundDataset):
         annotations: list[str],
         vocabulary: list[str],
         target: str,
-        limits: Limits,
+        *,
         value_nil: int = 0,
-        ignore_silence: bool = True,
         normalize: bool = False,
+        ignore_silence: bool = True,
         **kwargs,
     ):
         super().__init__(sounds, **kwargs)
@@ -353,7 +340,6 @@ class AnnotatedDataset(SoundDataset):
             is_stressed(w) for w in vocabulary
         )
         self.value_nil = value_nil
-        self.limits = limits
         self.normalize = normalize
         self.spaced = " " in vocabulary
         self.include_na = "[UNK]" in vocabulary
@@ -400,7 +386,7 @@ class AnnotatedDataset(SoundDataset):
     def num_classes(self):
         return len(self.vocabulary)
 
-    def limit(self, limits: Limits):
+    def limit(self, limits: Optional[Limits]):
         self.limits = limits
         return self
 
@@ -412,6 +398,9 @@ class AnnotatedDataset(SoundDataset):
         full_tensor=True,
         flat_labels=False,
     ):
+        if full_tensor and self.limits is None:
+            raise RuntimeError("Argument full_tensor cannot be set without limits")
+
         def collate_fn(samples: list[AnnotatedSample]) -> Optional[AnnotatedBatch]:
             if not samples or any(s is None for s in samples):
                 return None
@@ -425,9 +414,14 @@ class AnnotatedDataset(SoundDataset):
             ylens = torch.tensor([len(y) for y in ys], dtype=torch.int)
 
             out_sr = samples[0].rate
-            max_xlen = int(self.limits.time * out_sr if full_tensor else xlens.max())
-            max_x0len = int(self.limits.time * out_sr if full_tensor else x0lens.max())
-            max_ylen = int(self.limits.tokens if full_tensor else ylens.max())
+            if full_tensor and self.limits is not None:
+                max_xlen = int(self.limits.time * out_sr)
+                max_x0len = int(self.limits.time * out_sr)
+                max_ylen = int(self.limits.tokens)
+            else:
+                max_xlen = int(xlens.max())
+                max_x0len = int(x0lens.max())
+                max_ylen = int(ylens.max())
 
             xs = [_pad_axis(x, 0, max_xlen - len(x), axis=0) for x in xs]
             x0s = [_pad_axis(x0, 0, max_x0len - len(x0), axis=0) for x0 in x0s]
@@ -609,7 +603,10 @@ class AnnotatedDataset(SoundDataset):
 
         return torch.tensor(target), interv
 
-    def _get_limits(self, intervals: list[tuple[float, float]]) -> Limits:
+    def _get_limits(self, intervals: list[tuple[float, float]]) -> Optional[Limits]:
+        if self.limits is None:
+            return None
+
         if self.limits.time < intervals[-1][1]:
             max_time = [end for _, end in intervals if end <= self.limits.time][-1]
         else:
@@ -635,6 +632,7 @@ class TokenizedDataset(AnnotatedDataset):
         annotations: list[str],
         vocabulary: list[str],
         target: str,
+        *,
         duration: float = 1,
         scale: bool = False,
         context: tuple[int, int] = (0, 0),
@@ -687,7 +685,7 @@ class TokenizedDataset(AnnotatedDataset):
                 t0 = np.linspace(1, len(x), len(x))
                 t1 = np.linspace(1, len(x), fix_t)
 
-                if waveform or self.audio_proc is None:
+                if waveform or self.audio_transform is None:
                     # TODO
                     # x[i] = librosa.effects.time_stretch(xi, xi.shape[0]/fix_t)[:fix_t]
                     raise NotImplementedError()
@@ -782,17 +780,17 @@ class TokenizedDataset(AnnotatedDataset):
         it = iter(self.iterator(shuffle=shuffle, num_workers=num_workers))
         while count < n:
             try:
-                x, y = next(it)
+                batch = next(it)
             except StopIteration:
                 break
 
-            if x is None or y is None:
+            if batch is None:
                 continue
 
-            xs.append(x)
-            ys.append(y)
-            count += len(x)
-            pbar.update(len(x))
+            xs.append(batch.sound)
+            ys.append(batch.label)
+            count += len(batch.sound)
+            pbar.update(len(batch.sound))
 
         xs = torch.cat(xs, dim=0)[:n]
         ys = torch.cat(ys, dim=0)[:n]
@@ -808,14 +806,14 @@ class TokenizedDataset(AnnotatedDataset):
         it = iter(self.iterator(shuffle=shuffle, num_workers=num_workers))
         while min_count < n:
             try:
-                x, y = next(it)
+                batch = next(it)
             except StopIteration:
                 break
 
-            if x is None or y is None:
+            if batch is None:
                 continue
 
-            for xi, yi in zip(x, y):
+            for xi, yi in zip(batch.sound, batch.label):
                 if count[yi] >= n:
                     continue
 
@@ -849,26 +847,24 @@ class TokenizedDataset(AnnotatedDataset):
                 shuffle=shuffle, batch_size=batch_size, num_workers=num_workers
             )
         )
-        out_sr = self.in_sr if self.audio_proc is None else self.out_sr
 
         while count < n:
             try:
-                x, y, length = next(it)
+                batch = next(it)
             except StopIteration:
                 break
 
-            if x is None or y is None:
+            if batch is None:
                 continue
 
             stats["identity"].append(
-                np.array([self.vocabulary[_] for _ in y], dtype=object)
+                np.array([self.vocabulary[_] for _ in batch.label], dtype=object)
             )
-            stats["length"].append(length.numpy() / out_sr)
-            count += len(x)
-            pbar.update(len(x))
+            stats["length"].append(batch.sound_length.numpy() / batch.rate)
+            count += len(batch.sound)
+            pbar.update(len(batch.sound))
 
-        for k in stats:
-            stats[k] = np.concatenate(stats[k], axis=0)[:n]
+        stats = {k: np.concatenate(stats[k], axis=0)[:n] for k in stats}
 
         return stats
 
@@ -877,6 +873,7 @@ class BlockDataset(SoundDataset):
     def __init__(
         self,
         sounds: list[str],
+        *,
         max_time: float = 2.5,
         block_min: float = 0.01,
         max_step: Optional[float] = None,
@@ -885,7 +882,7 @@ class BlockDataset(SoundDataset):
         **kwargs,
     ):
         super().__init__(sounds, **kwargs)
-        self.limits.time = max_time
+        self.max_time = max_time
         self.block_min = block_min
         self.batch_first = batch_first
         self.max_step = max_time if max_step is None else max_step
@@ -895,7 +892,7 @@ class BlockDataset(SoundDataset):
         self, idx: int, waveform: bool = False
     ) -> Optional[TokenizedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
-        maxblk = int(self.limits.time * sample.rate)
+        maxblk = int(self.max_time * sample.rate)
         minblk = int(self.block_min * sample.rate)
         maxstp = int(self.max_step * sample.rate)
 
@@ -989,8 +986,9 @@ class SequenceDataset(AnnotatedDataset):
         self,
         sounds,
         annotations,
-        vocabulary=[],
-        target="words",
+        vocabulary,
+        target,
+        *,
         seq_size=20,
         seq_min=1,
         seq_time=8.0,
@@ -998,7 +996,7 @@ class SequenceDataset(AnnotatedDataset):
         check_boundaries=True,
         **kwargs,
     ):
-        super().__init__(sounds, annotations, vocabulary, target=target, **kwargs)
+        super().__init__(sounds, annotations, vocabulary, target, **kwargs)
         self.seq_size = seq_size
         self.seq_min = seq_min if seq_min else seq_size
         self.seq_time = seq_time
@@ -1179,7 +1177,8 @@ class SymmetricTokenDataset(AnnotatedDataset):
         sounds,
         annotations,
         vocabulary,
-        target="words",
+        target,
+        *,
         base_rate="moderate",
         context=6,
         alignment="center",
@@ -1321,7 +1320,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
             freqs = np.linspace(1, freqbins, freqbins)
 
             for i, xi in enumerate(xs):
-                if waveform or self.audio_proc is None:
+                if waveform or self.audio_transform is None:
                     # x[i] = librosa.effects.time_stretch(xi, context/target_t)
                     pass
                 else:
@@ -1461,24 +1460,25 @@ class MultiAnnotatedDataset(SoundDataset):
         sounds,
         annotations,
         vocabulary,
-        stressed=False,
+        *,
         value_nil=0,
-        ignore_silence=True,
         normalize=False,
-        batch_first=True,
+        ignore_silence=True,
         **kwargs,
     ):
         super().__init__(sounds, **kwargs)
         self.annotations = annotations
         self.vocabulary = vocabulary
-        self.stressed = stressed
+        self.stressed = {
+            k in ("phones", "syllables") and any(is_stressed(w) for w in v)
+            for k, v in vocabulary.items()
+        }
         self.value_nil = value_nil
         self.normalize = normalize
         self.spaced = {k: (" " in v) for k, v in vocabulary.items()}
         self.include_na = {k: ("[UNK]" in v) for k, v in vocabulary.items()}
         self.ignore_silence = ignore_silence
-        self.batch_first = batch_first
-        self.targets = ["phones", "syllables", "words"]
+        self.targets = sorted(vocabulary.keys())
         self.key = {
             k: {tok: i for i, tok in enumerate(v)} for k, v in vocabulary.items()
         }
@@ -1635,6 +1635,7 @@ class MultiSymmetricTokenDataset(MultiAnnotatedDataset):
         sounds,
         annotations,
         vocabulary,
+        *,
         base_rate="moderate",
         context=6,
         alignment="center",
@@ -1718,7 +1719,7 @@ class MultiSymmetricTokenDataset(MultiAnnotatedDataset):
 
     def __getitem__(self, idx: int, waveform: bool = False):
         x, p, s, w = super().__getitem__(idx, waveform=waveform)
-        out_sr = self.in_sr if waveform or self.audio_proc is None else self.out_sr
+        out_sr = self.in_sr if waveform or self.audio_transform is None else self.out_sr
         if x is None:
             return (None,) * 5
 
