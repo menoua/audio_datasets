@@ -23,93 +23,136 @@ from .limits import Limits
 
 torchaudio.set_audio_backend("sox_io")
 
+Interval = list[tuple[float, float]]
+
 
 @dataclass
 class SoundSample:
-    sound: Tensor
-    source: Tensor
-    rate: int
+    """
+    sound: (audio: Tensor, sr: int)
+    source: (audio: Tensor, sr: int)
+    skew: float
+    """
+
+    sound: tuple[Tensor, int]
+    source: tuple[Tensor, int]
     skew: float
 
 
 @dataclass
 class AnnotatedSample:
-    sound: Tensor
-    source: Tensor
-    rate: int
-    skew: float
+    """
+    sound: (audio: Tensor, sr: int, intervals: Interval)
+    source: (audio: Tensor, sr: int, intervals: Interval)
     label: Tensor
-    interval: list[tuple[float, float]]
+    skew: float
+    """
+
+    sound: tuple[Tensor, int, Interval]
+    source: tuple[Tensor, int, Interval]
+    label: Tensor
+    skew: float
 
 
 @dataclass
 class TokenizedSample:
-    sound: Tensor
-    sound_length: Tensor
-    source: Tensor
-    source_length: Tensor
-    rate: int
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor)
+    skew: float
+    """
+
+    sound: tuple[Tensor, int, Tensor]
+    source: tuple[Tensor, int, Tensor]
+    skew: float
 
 
 @dataclass
 class AnnotatedTokenizedSample:
-    sound: Tensor
-    sound_length: Tensor
-    source: Tensor
-    source_length: Tensor
-    rate: int
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor)
     label: Tensor
-    label_length: Tensor
-    interval: list[tuple[float, float]]
+    skew: float
+    """
+
+    sound: tuple[Tensor, int, Tensor]
+    source: tuple[Tensor, int, Tensor]
+    label: Tensor
+    skew: float
 
 
 @dataclass
 class SequenceSample:
-    sound: Tensor
-    sound_length: Tensor
-    sound_span: Tensor
-    source: Tensor
-    source_length: Tensor
-    source_span: Tensor
-    rate: int
-    label: Tensor
-    label_length: Tensor
-    label_span: Tensor
-    interval: list[tuple[float, float]]
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor, spans: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor, spans: Tensor)
+    label: (labels: Tensor, lengths: Tensor, spans: Tensor)
+    skew: float
+    """
+
+    sound: tuple[Tensor, int, Tensor, Tensor]
+    source: tuple[Tensor, int, Tensor, Tensor]
+    label: tuple[Tensor, Tensor, Tensor]
+    skew: float
 
 
 @dataclass
 class SoundBatch:
-    sound: Tensor
-    sound_length: Tensor
-    source: Tensor
-    source_length: Tensor
-    rate: int
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor)
+    skew: Tensor
+    """
+
+    sound: tuple[Tensor, int, Tensor]
+    source: tuple[Tensor, int, Tensor]
+    skew: Tensor
+
+
+@dataclass
+class AnnotatedTokenizedBatch:
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor)
+    label: Tensor
+    skew: Tensor
+    """
+
+    sound: tuple[Tensor, int, Tensor]
+    source: tuple[Tensor, int, Tensor]
+    label: Tensor
+    skew: Tensor
 
 
 @dataclass
 class AnnotatedBatch:
-    sound: Tensor
-    sound_length: Tensor
-    source: Tensor
-    source_length: Tensor
-    rate: int
-    label: Tensor
-    label_length: Tensor
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor)
+    label: (labels: Tensor, lengths: Tensor)
+    skew: Tensor
+    """
+
+    sound: tuple[Tensor, int, Tensor]
+    source: tuple[Tensor, int, Tensor]
+    label: tuple[Tensor, Tensor]
+    skew: Tensor
 
 
 @dataclass
 class SequenceBatch:
-    sound: Tensor
-    sound_length: Tensor
-    sound_span: Tensor
-    source: Tensor
-    source_length: Tensor
-    source_span: Tensor
-    rate: int
-    label: Tensor
-    label_length: Tensor
-    label_span: Tensor
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor, spans: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor, spans: Tensor)
+    label: (labels: Tensor, lengths: Tensor, spans: Tensor)
+    skew: float
+    """
+
+    sound: tuple[Tensor, int, Tensor, Tensor]
+    source: tuple[Tensor, int, Tensor, Tensor]
+    label: tuple[Tensor, Tensor, Tensor]
+    skew: Tensor
 
 
 class SoundDataset(torch.utils.data.Dataset):
@@ -215,9 +258,8 @@ class SoundDataset(torch.utils.data.Dataset):
             out_sr = int(in_sr * mix_x.shape[0] / mix_audio.shape[1])
 
         return SoundSample(
-            sound=mix_x,
-            source=in_x,
-            rate=out_sr,
+            sound=(mix_x, out_sr),
+            source=(in_x, out_sr),
             skew=skew,
         )
 
@@ -269,32 +311,33 @@ class SoundDataset(torch.utils.data.Dataset):
             if not samples or any(s is None for s in samples):
                 return None
 
-            xs = [s.sound for s in samples]
-            x0s = [s.source for s in samples]
+            sounds, sound_sr = zip(*[s.sound for s in samples])
+            sources, source_sr = zip(*[s.source for s in samples])
 
-            xlens = torch.tensor([len(x) for x in xs], dtype=torch.int)
-            x0lens = torch.tensor([len(x0) for x0 in x0s], dtype=torch.int)
+            sounds_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
+            source_lens = torch.tensor([len(x) for x in sources], dtype=torch.int)
 
-            out_sr = samples[0].rate
+            out_sr = samples[0].sound[1]
             if full_tensor and self.limits is not None:
-                max_xlen = int(self.limits.time * out_sr)
-                max_x0len = int(self.limits.time * out_sr)
+                max_sounds_len = int(self.limits.time * sound_sr[0])
+                max_sources_len = int(self.limits.time * source_sr[0])
             else:
-                max_xlen = int(xlens.max())
-                max_x0len = int(x0lens.max())
+                max_sounds_len = int(sounds_lens.max())
+                max_sources_len = int(source_lens.max())
 
-            xs = [_pad_axis(x, 0, max_xlen - len(x), axis=0) for x in xs]
-            x0s = [_pad_axis(x0, 0, max_x0len - len(x0), axis=0) for x0 in x0s]
+            sounds = [_pad_axis(x, 0, max_sounds_len - len(x), axis=0) for x in sounds]
+            sources = [
+                _pad_axis(x, 0, max_sources_len - len(x), axis=0) for x in sources
+            ]
 
-            xs = torch.stack(xs, dim=self.batch_dim)
-            x0s = torch.stack(x0s, dim=self.batch_dim)
+            sounds = torch.stack(sounds, dim=self.batch_dim)
+            sources = torch.stack(sources, dim=self.batch_dim)
+            skew = torch.tensor([s.skew for s in samples])
 
             return SoundBatch(
-                sound=xs,
-                sound_length=xlens,
-                source=x0s,
-                source_length=x0lens,
-                rate=out_sr,
+                sound=(sounds, out_sr, sounds_lens),
+                source=(sources, out_sr, source_lens),
+                skew=skew,
             )
 
         return torch.utils.data.DataLoader(
@@ -342,32 +385,37 @@ class AnnotatedDataset(SoundDataset):
         waveform: bool = False,
     ) -> Optional[AnnotatedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
+        sound, sound_sr = sample.sound
+        source, source_sr = sample.source
+        skew = sample.skew
 
-        y, intervals = self._annotation(self.annotations[idx])
-        intervals = [
-            (start * sample.skew, stop * sample.skew) for start, stop in intervals
+        y, source_intervals = self._annotation(self.annotations[idx])
+        sound_intervals = [
+            (start * skew, stop * skew) for start, stop in source_intervals
         ]
         if len(y) == 0:
             return None
 
-        sample = AnnotatedSample(
-            sound=sample.sound,
-            source=sample.source,
-            rate=sample.rate,
-            skew=sample.skew,
-            label=y,
-            interval=intervals,
-        )
+        if skew >= 1:
+            limits = self._get_limits(sound_intervals)
+        else:
+            limits = self._get_limits(source_intervals)
+            if limits:
+                limits.time *= skew
 
-        limits = self._get_limits(intervals)
         if limits:
-            limits.time = int(limits.time * sample.rate)
-            sample.sound = sample.sound[: limits.time]
-            sample.source = sample.source[: limits.time]
-            sample.label = sample.label[: limits.tokens]
-            sample.interval = sample.interval[: limits.tokens]
+            sound = sound[: int(limits.time * sound_sr)]
+            source = source[: int(limits.time / skew * source_sr)]
+            y = y[: limits.tokens]
+            sound_intervals = sound_intervals[: limits.tokens]
+            source_intervals = source_intervals[: limits.tokens]
 
-        return sample
+        return AnnotatedSample(
+            sound=(sound, sound_sr, sound_intervals),
+            source=(source, source_sr, source_intervals),
+            label=y,
+            skew=sample.skew,
+        )
 
     @property
     def num_classes(self):
@@ -392,44 +440,47 @@ class AnnotatedDataset(SoundDataset):
             if not samples or any(s is None for s in samples):
                 return None
 
-            xs = [s.sound for s in samples]
-            x0s = [s.source for s in samples]
-            ys = [s.label for s in samples]
+            sounds = [s.sound[0] for s in samples]
+            sources = [s.source[0] for s in samples]
+            labels = [s.label for s in samples]
+            _, sound_sr, _ = samples[0].sound
+            _, source_sr, _ = samples[0].source
 
-            xlens = torch.tensor([len(x) for x in xs], dtype=torch.int)
-            x0lens = torch.tensor([len(x0) for x0 in x0s], dtype=torch.int)
-            ylens = torch.tensor([len(y) for y in ys], dtype=torch.int)
+            sound_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
+            source_lens = torch.tensor([len(x) for x in sources], dtype=torch.int)
+            label_lens = torch.tensor([len(y) for y in labels], dtype=torch.int)
 
-            out_sr = samples[0].rate
             if full_tensor and self.limits is not None:
-                max_xlen = int(self.limits.time * out_sr)
-                max_x0len = int(self.limits.time * out_sr)
-                max_ylen = int(self.limits.tokens)
+                max_sound_len = int(self.limits.time * sound_sr)
+                max_source_len = int(self.limits.time * source_sr)
+                max_label_len = int(self.limits.tokens)
             else:
-                max_xlen = int(xlens.max())
-                max_x0len = int(x0lens.max())
-                max_ylen = int(ylens.max())
+                max_sound_len = int(sound_lens.max())
+                max_source_len = int(source_lens.max())
+                max_label_len = int(label_lens.max())
 
-            xs = [_pad_axis(x, 0, max_xlen - len(x), axis=0) for x in xs]
-            x0s = [_pad_axis(x0, 0, max_x0len - len(x0), axis=0) for x0 in x0s]
+            sounds = [_pad_axis(x, 0, max_sound_len - len(x), axis=0) for x in sounds]
+            sources = [
+                _pad_axis(x, 0, max_source_len - len(x), axis=0) for x in sources
+            ]
             if not flat_labels:
-                ys = [_pad_axis(y, 0, max_ylen - len(y), axis=0) for y in ys]
+                labels = [
+                    _pad_axis(y, 0, max_label_len - len(y), axis=0) for y in labels
+                ]
 
-            xs = torch.stack(xs, dim=self.batch_dim)
-            x0s = torch.stack(x0s, dim=self.batch_dim)
+            sounds = torch.stack(sounds, dim=self.batch_dim)
+            sources = torch.stack(sources, dim=self.batch_dim)
             if flat_labels:
-                ys = torch.cat(ys)
+                labels = torch.cat(labels)
             else:
-                ys = torch.stack(ys, dim=self.batch_dim)
+                labels = torch.stack(labels, dim=self.batch_dim)
+            skew = torch.tensor([s.skew for s in samples])
 
             return AnnotatedBatch(
-                sound=xs,
-                sound_length=xlens,
-                source=x0s,
-                source_length=x0lens,
-                rate=out_sr,
-                label=ys,
-                label_length=ylens,
+                sound=(sounds, sound_sr, sound_lens),
+                source=(sources, source_sr, source_lens),
+                label=(labels, label_lens),
+                skew=skew,
             )
 
         return torch.utils.data.DataLoader(
@@ -640,78 +691,115 @@ class TokenizedDataset(AnnotatedDataset):
         self, idx: int, waveform: bool = False
     ) -> Optional[AnnotatedTokenizedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
-        if sample is None or sample.label is None or sample.interval is None:
+        if sample is None:
             return None
 
-        xs, xlens = [], []
         pre_ctx, post_ctx = self.context
-        for start, stop in sample.interval:
-            length = stop - start
-            ctx_start = int((start - length * pre_ctx) * sample.rate)
-            ctx_end = int((stop + length * post_ctx) * sample.rate)
-            x = sample.sound[max(ctx_start, 0) : ctx_end]
-            x = _pad_axis(x, -ctx_start, ctx_end - len(sample.sound))
-            xs.append(x)
-            xlens.append(len(x))
+        sound, sound_sr, sound_interval = sample.sound
+        source, source_sr, source_interval = sample.source
+        label = sample.label.int()
+        skew = sample.skew
 
-        freqbins = sample.sound.shape[1]
-        fix_t = int(self.duration * (1 + pre_ctx + post_ctx) * sample.rate)
+        sounds, sounds_lens = [], []
+        for start, stop in sound_interval:
+            length = stop - start
+            ctx_start = int((start - length * pre_ctx) * sound_sr)
+            ctx_end = int((stop + length * post_ctx) * sound_sr)
+            x = sound[max(ctx_start, 0) : ctx_end]
+            x = _pad_axis(x, -ctx_start, ctx_end - len(sound))
+            sounds.append(x)
+            sounds_lens.append(len(x))
+
+        sources, sources_lens = [], []
+        for start, stop in source_interval:
+            length = stop - start
+            ctx_start = int((start - length * pre_ctx) * source_sr)
+            ctx_end = int((stop + length * post_ctx) * source_sr)
+            x = source[max(ctx_start, 0) : ctx_end]
+            x = _pad_axis(x, -ctx_start, ctx_end - len(source))
+            sources.append(x)
+            sources_lens.append(len(x))
+
+        freqbins = sound.shape[1]
+        sound_fix_t = int(self.duration * (1 + pre_ctx + post_ctx) * sound_sr)
+        source_fix_t = int(self.duration * (1 + pre_ctx + post_ctx) * source_sr)
         freqs = np.linspace(1, freqbins, freqbins)
 
-        ys = sample.label.int()
         if not self.scale:
-            will_fit = [i for i, length in enumerate(xlens) if length <= fix_t]
-            xs = [xs[i] for i in will_fit]
-            xlens = [xlens[i] for i in will_fit]
-            ys = ys[will_fit]
-        if len(xs) == 0:
+            will_fit = [
+                i for i, length in enumerate(sounds_lens) if length <= sound_fix_t
+            ]
+            sounds = [sounds[i] for i in will_fit]
+            sounds_lens = [sounds_lens[i] for i in will_fit]
+            label = label[will_fit]
+        if len(sounds) == 0:
             return None
 
-        for i, x in enumerate(xs):
-            if self.scale or len(x) > fix_t:
-                t0 = np.linspace(1, len(x), len(x))
-                t1 = np.linspace(1, len(x), fix_t)
-
+        for i, x in enumerate(sounds):
+            if self.scale or len(x) > sound_fix_t:
                 if waveform or self.audio_transform is None:
                     # TODO
                     # x[i] = librosa.effects.time_stretch(xi, xi.shape[0]/fix_t)[:fix_t]
                     raise NotImplementedError()
                 else:
-                    xs[i] = sp.interpolate.RectBivariateSpline(t0, freqs, x)(t1, freqs)
-                xlens[i] = fix_t
+                    t0 = np.linspace(1, len(x), len(x))
+                    t1 = np.linspace(1, len(x), sound_fix_t)
+                    sounds[i] = sp.interpolate.RectBivariateSpline(t0, freqs, x)(
+                        t1, freqs
+                    )
+                    sounds_lens[i] = sound_fix_t
             else:
-                diff = fix_t - len(x)
-
+                diff = sound_fix_t - len(x)
                 if self.alignment == "left":
                     pre_t, post_t = 0, diff
                 elif self.alignment == "right":
                     pre_t, post_t = diff, 0
                 else:
                     pre_t, post_t = math.floor(diff / 2), math.ceil(diff / 2)
+                sounds[i] = _pad_axis(x, pre_t, post_t, axis=0)
+                sounds_lens[i] = len(x) - post_t
 
-                xs[i] = _pad_axis(x, pre_t, post_t, axis=0)
-                xlens[i] = len(x) - post_t
+        for i, x in enumerate(sources):
+            if self.scale or len(x) > sound_fix_t:
+                if waveform or self.audio_transform is None:
+                    # TODO
+                    # x[i] = librosa.effects.time_stretch(xi, xi.shape[0]/fix_t)[:fix_t]
+                    raise NotImplementedError()
+                else:
+                    t0 = np.linspace(1, len(x), len(x))
+                    t1 = np.linspace(1, len(x), source_fix_t)
+                    sources[i] = sp.interpolate.RectBivariateSpline(t0, freqs, x)(
+                        t1, freqs
+                    )
+                    sources_lens[i] = source_fix_t
+            else:
+                diff = source_fix_t - len(x)
+                if self.alignment == "left":
+                    pre_t, post_t = 0, diff
+                elif self.alignment == "right":
+                    pre_t, post_t = diff, 0
+                else:
+                    pre_t, post_t = math.floor(diff / 2), math.ceil(diff / 2)
+                sources[i] = _pad_axis(x, pre_t, post_t, axis=0)
+                sources_lens[i] = len(x) - post_t
 
-        xs = torch.stack(xs, dim=self.batch_dim).float()
-        xlens = torch.tensor(xlens, dtype=torch.int)
-        ylens = torch.ones_like(xlens, dtype=torch.int)
+        sounds = torch.stack(sounds, dim=self.batch_dim).float()
+        sounds_lens = torch.tensor(sounds_lens, dtype=torch.int)
+        sources = torch.stack(sources, dim=self.batch_dim).float()
+        sources_lens = torch.tensor(sources_lens, dtype=torch.int)
 
         # TODO I don't remember what this was supposed to do
         if self.drop_modifiers:
-            xs = xs[xlens != 0]
-            ys = ys[xlens != 0]
-            xlens = xlens[xlens != 0]
+            sounds = sounds[sounds_lens != 0]
+            label = label[sounds_lens != 0]
+            sounds_lens = sounds_lens[sounds_lens != 0]
 
         # TODO clean sources not handled
         return AnnotatedTokenizedSample(
-            sound=xs,
-            sound_length=xlens,
-            source=xs,
-            source_length=xlens,
-            rate=sample.rate,
-            label=ys,
-            label_length=ylens,
-            interval=sample.interval,
+            sound=(sounds, sound_sr, sounds_lens),
+            source=(sources, source_sr, sources_lens),
+            label=label,
+            skew=skew,
         )
 
     def iterator(
@@ -722,33 +810,27 @@ class TokenizedDataset(AnnotatedDataset):
     ):
         def collate_fn(
             samples: list[AnnotatedTokenizedSample],
-        ) -> Optional[AnnotatedBatch]:
+        ) -> Optional[AnnotatedTokenizedBatch]:
             samples = [s for s in samples if s is not None and s.label is not None]
             if not samples:
                 return None
 
-            xs = [s.sound for s in samples]
-            x0s = [s.source for s in samples]
-            ys = [s.label for s in samples]
-            xlens = [s.sound_length for s in samples]
-            x0lens = [s.source_length for s in samples]
-            ylens = [s.label_length for s in samples]
+            sounds, sound_sr, sounds_lens = zip(*[s.sound for s in samples])
+            sources, source_sr, sources_lens = zip(*[s.source for s in samples])
+            labels = [s.label for s in samples]
 
-            xs = torch.cat(xs, dim=self.batch_dim)
-            x0s = torch.cat(x0s, dim=self.batch_dim)
-            ys = torch.cat(ys, dim=self.batch_dim)
-            xlens = torch.cat(xlens)
-            x0lens = torch.cat(x0lens)
-            ylens = torch.cat(ylens)
+            sounds = torch.cat(sounds, dim=self.batch_dim)
+            sources = torch.cat(sources, dim=self.batch_dim)
+            labels = torch.cat(labels, dim=self.batch_dim)
+            sounds_lens = torch.cat(sounds_lens)
+            sources_lens = torch.cat(sources_lens)
+            skew = torch.tensor([s.skew for s in samples])
 
-            return AnnotatedBatch(
-                sound=xs,
-                sound_length=xlens,
-                source=x0s,
-                source_length=xlens,
-                rate=samples[0].rate,
-                label=ys,
-                label_length=ylens,
+            return AnnotatedTokenizedBatch(
+                sound=(sounds, sound_sr[0], sounds_lens),
+                source=(sources, source_sr[0], sources_lens),
+                label=labels,
+                skew=skew,
             )
 
         return torch.utils.data.DataLoader(
@@ -879,48 +961,66 @@ class BlockDataset(SoundDataset):
         self, idx: int, waveform: bool = False
     ) -> Optional[TokenizedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
-        maxblk = int(self.max_time * sample.rate)
-        minblk = int(self.block_min * sample.rate)
-        maxstp = int(self.max_step * sample.rate)
+        sound, sound_sr = sample.sound
+        source, source_sr = sample.source
+
+        sound_maxblk = int(self.max_time * sound_sr)
+        sound_minblk = int(self.block_min * sound_sr)
+        sound_maxstp = int(self.max_step * sound_sr)
+        source_maxblk = int(self.max_time * source_sr)
+        source_minblk = int(self.block_min * source_sr)
+        # source_maxstp = int(self.max_step * source_sr)
 
         if self.prepad:
-            sample.sound = _pad_axis(sample.sound, maxblk - 1, 0, axis=0)
-            sample.source = _pad_axis(sample.source, maxblk - 1, 0, axis=0)
+            sound = _pad_axis(sound, sound_maxblk - 1, 0, axis=0)
+            source = _pad_axis(source, source_maxblk - 1, 0, axis=0)
 
         index = 0
-        xs, x0s, xlens, x0lens = [], [], [], []
-        while index < len(sample.sound):
-            length = np.random.randint(minblk, maxblk + 1)
-
-            if index + length > len(sample.sound):
-                length = len(sample.sound) - index
-            if length < minblk:
+        sounds = []
+        sources = []
+        sounds_lens = []
+        sources_lens = []
+        while index < len(sound):
+            length = np.random.randint(sound_minblk, sound_maxblk + 1)
+            if index + length > len(sound):
+                length = len(sound) - index
+            if length < sound_minblk:
                 break
+            sounds.append(sound[index : index + length])
+            sounds_lens.append(length)
 
-            xs.append(sample.sound[index : index + length])
-            x0s.append(sample.source[index : index + length])
-            xlens.append(length)
-            x0lens.append(length)
-            index += min(length, maxstp)
+            length = np.random.randint(source_minblk, source_maxblk + 1)
+            if index + length > len(source):
+                length = len(source) - index
+            if length < source_minblk:
+                break
+            sources.append(source[index : index + length])
+            sources_lens.append(length)
 
-        if len(xs) == 0:
+            index += min(length, sound_maxstp)
+
+        if not sounds:
             return None
 
-        xs = torch.stack(
-            [_pad_axis(x, 0, maxblk - len(x), axis=self.batch_dim) for x in xs]
+        sounds = torch.stack(
+            [
+                _pad_axis(x, 0, sound_maxblk - len(x), axis=self.batch_dim)
+                for x in sounds
+            ]
         )
-        x0s = torch.stack(
-            [_pad_axis(x0, 0, maxblk - len(x0), axis=self.batch_dim) for x0 in x0s]
+        sources = torch.stack(
+            [
+                _pad_axis(x, 0, source_maxblk - len(x), axis=self.batch_dim)
+                for x in sources
+            ]
         )
-        xlens = torch.tensor(xlens, dtype=torch.int)
-        x0lens = torch.tensor(x0lens, dtype=torch.int)
+        sounds_lens = torch.tensor(sounds_lens, dtype=torch.int)
+        sources_lens = torch.tensor(sources_lens, dtype=torch.int)
 
         return TokenizedSample(
-            sound=xs,
-            sound_length=xlens,
-            source=x0s,
-            source_length=x0lens,
-            rate=sample.rate,
+            sound=(sounds, sound_sr, sounds_lens),
+            source=(sources, source_sr, sources_lens),
+            skew=sample.skew,
         )
 
     def iterator(
@@ -935,28 +1035,31 @@ class BlockDataset(SoundDataset):
             if not samples:
                 return None
 
-            xs = [s.sound for s in samples]
-            x0s = [s.source for s in samples]
-            xlens = [s.sound_length for s in samples]
-            x0lens = [s.source_length for s in samples]
+            sounds, sound_sr, sounds_lens = zip(*[s.sound for s in samples])
+            sources, source_sr, sources_lens = zip(*[s.source for s in samples])
 
-            xs = torch.cat(xs, dim=self.batch_dim)
-            x0s = torch.cat(x0s, dim=self.batch_dim)
-            xlens = torch.cat(xlens)
-            x0lens = torch.cat(x0lens)
+            sounds = torch.cat(sounds, dim=self.batch_dim)
+            sources = torch.cat(sources, dim=self.batch_dim)
+            sounds_lens = torch.cat(sounds_lens)
+            sources_lens = torch.cat(sources_lens)
+            skew = torch.tensor([s.skew for s in samples])
 
             if batch_max is not None:
-                xs = xs[:batch_max] if self.batch_dim == 0 else xs[:, :batch_max]
-                x0s = x0s[:batch_max] if self.batch_dim == 0 else x0s[:, :batch_max]
-                xlens = xlens[:batch_max]
-                x0lens = x0lens[:batch_max]
+                sounds = (
+                    sounds[:batch_max] if self.batch_dim == 0 else sounds[:, :batch_max]
+                )
+                sources = (
+                    sources[:batch_max]
+                    if self.batch_dim == 0
+                    else sources[:, :batch_max]
+                )
+                sounds_lens = sounds_lens[:batch_max]
+                sources_lens = sources_lens[:batch_max]
 
             return SoundBatch(
-                sound=xs,
-                sound_length=xlens,
-                source=x0s,
-                source_length=x0lens,
-                rate=samples[0].rate,
+                sound=(sounds, sound_sr, sounds_lens),
+                source=(sources, source_sr, sources_lens),
+                skew=skew,
             )
 
         return torch.utils.data.DataLoader(
@@ -971,16 +1074,16 @@ class BlockDataset(SoundDataset):
 class SequenceDataset(AnnotatedDataset):
     def __init__(
         self,
-        sounds,
-        annotations,
-        vocabulary,
-        target,
+        sounds: list[str],
+        annotations: list[str],
+        vocabulary: list[str],
+        target: str,
         *,
-        seq_size=20,
-        seq_min=1,
-        seq_time=8.0,
-        seq_overlap=False,
-        check_boundaries=True,
+        seq_size: int = 20,
+        seq_min: int = 1,
+        seq_time: float = 8.0,
+        seq_overlap: bool = False,
+        check_boundaries: bool = True,
         **kwargs,
     ):
         super().__init__(sounds, annotations, vocabulary, target, **kwargs)
@@ -993,26 +1096,31 @@ class SequenceDataset(AnnotatedDataset):
     @torch.no_grad()
     def __getitem__(self, idx: int, waveform: bool = False) -> Optional[SequenceSample]:
         sample = super().__getitem__(idx, waveform=waveform)
-        if sample is None or sample.label is None or sample.interval is None:
+        if sample is None:
             return None
 
-        maxblk = int(self.seq_time * sample.rate)
+        sound, sound_sr, sound_interval = sample.sound
+        source, source_sr, source_interval = sample.source
+        label = sample.label
+        skew = sample.skew
+
+        sound_maxblk = int(self.seq_time * sound_sr)
+        source_maxblk = int(self.seq_time * source_sr)
 
         index = 0
-        xs, xlens, xpos = [], [], []
-        x0s, x0lens, x0pos = [], [], []
-        ys, ylens, ypos = [], [], []
-        while index < len(sample.interval):
-            if self.check_boundaries and is_postfix(
-                self.vocabulary[sample.label[index]]
-            ):
+        sounds, sounds_lens, sounds_span = [], [], []
+        sources, sources_lens, sources_span = [], [], []
+        labels, labels_lens, labels_span = [], [], []
+        interval = sound_interval if skew >= 1 else source_interval
+        while index < len(interval):
+            if self.check_boundaries and is_postfix(self.vocabulary[label[index]]):
                 index += 1
                 continue
 
             length = np.random.randint(self.seq_min, self.seq_size + 1)
 
-            if index + length > len(sample.interval):
-                length = len(sample.interval) - index
+            if index + length > len(interval):
+                length = len(interval) - index
             if length < self.seq_min:
                 break
 
@@ -1020,76 +1128,73 @@ class SequenceDataset(AnnotatedDataset):
                 init_length = length
 
                 while (
-                    index + length <= len(sample.interval)
+                    index + length <= len(interval)
                     and length <= self.seq_size
-                    and is_prefix(self.vocabulary[sample.label[index + length - 1]])
+                    and is_prefix(self.vocabulary[label[index + length - 1]])
                 ):
                     length += 1
-                if length > self.seq_size or index + length > len(sample.interval):
+                if length > self.seq_size or index + length > len(interval):
                     length = init_length
 
                 while length >= self.seq_min and is_prefix(
-                    self.vocabulary[sample.label[index + length - 1]]
+                    self.vocabulary[label[index + length - 1]]
                 ):
                     length -= 1
                 if length < self.seq_min:
                     index += 1
                     continue
 
-            start = max(int(sample.interval[index][0] * sample.rate) - 1, 0)
-            stop = int(sample.interval[index + length - 1][1] * sample.rate) + 2
-            while stop - start > maxblk and length > self.seq_min:
+            start = max(int(sound_interval[index][0] * sound_sr) - 1, 0)
+            stop = int(sound_interval[index + length - 1][1] * sound_sr) + 2
+            while stop - start > sound_maxblk and length > self.seq_min:
                 length -= 1
-                stop = int(sample.interval[index + length - 1][1] * sample.rate) + 2
-            if stop - start > maxblk:
+                stop = int(sound_interval[index + length - 1][1] * sound_sr) + 2
+            if stop - start > sound_maxblk:
                 index += 1
                 continue
+            sounds.append(sound[start:stop])
+            sounds_lens.append(stop - start)
+            sounds_span.append((start, stop))
 
-            xs.append(sample.sound[start:stop])
-            x0s.append(sample.source[start:stop])
-            ys.append(sample.label[index : index + length])
-            xlens.append(stop - start)
-            x0lens.append(stop - start)
-            ylens.append(length)
-            xpos.append((start, stop))
-            x0pos.append((start, stop))
-            ypos.append((index, index + length))
+            start = max(int(source_interval[index][0] * source_sr) - 1, 0)
+            stop = int(source_interval[index + length - 1][1] * source_sr) + 2
+            sources.append(source[start:stop])
+            sources_lens.append(stop - start)
+            sources_span.append((start, stop))
+
+            labels.append(label[index : index + length])
+            labels_lens.append(length)
+            labels_span.append((index, index + length))
             index += 1 if self.seq_overlap else length
 
-        if len(xs) == 0:
+        if not sounds:
             return None
 
-        xs = torch.stack(
-            [_pad_axis(x, 0, maxblk - len(x), axis=0) for x in xs], dim=self.batch_dim
-        )
-        x0s = torch.stack(
-            [_pad_axis(x0, 0, maxblk - len(x0), axis=0) for x0 in x0s],
+        sounds = torch.stack(
+            [_pad_axis(x, 0, sound_maxblk - len(x), axis=0) for x in sounds],
             dim=self.batch_dim,
         )
-        ys = torch.stack(
-            [_pad_axis(y, 0, self.seq_size - len(y), axis=0) for y in ys],
+        sources = torch.stack(
+            [_pad_axis(x, 0, source_maxblk - len(x), axis=0) for x in sources],
             dim=self.batch_dim,
         )
-        xlens = torch.tensor(xlens, dtype=torch.int)
-        x0lens = torch.tensor(x0lens, dtype=torch.int)
-        ylens = torch.tensor(ylens, dtype=torch.int)
-        xpos = torch.tensor(xpos, dtype=torch.int)
-        x0pos = torch.tensor(x0pos, dtype=torch.int)
-        ypos = torch.tensor(ypos, dtype=torch.int)
+        labels = torch.stack(
+            [_pad_axis(y, 0, self.seq_size - len(y), axis=0) for y in labels],
+            dim=self.batch_dim,
+        )
+        sounds_lens = torch.tensor(sounds_lens, dtype=torch.int)
+        sources_lens = torch.tensor(sources_lens, dtype=torch.int)
+        labels_lens = torch.tensor(labels_lens, dtype=torch.int)
+        sounds_span = torch.tensor(sounds_span, dtype=torch.int)
+        sources_span = torch.tensor(sources_span, dtype=torch.int)
+        labels_span = torch.tensor(labels_span, dtype=torch.int)
 
         # TODO check if clean sources properly handled
         return SequenceSample(
-            sound=xs,
-            sound_length=xlens,
-            sound_span=xpos,
-            source=x0s,
-            source_length=x0lens,
-            source_span=x0pos,
-            rate=sample.rate,
-            label=ys,
-            label_length=ylens,
-            label_span=ypos,
-            interval=sample.interval,  # TODO might be meaningless here
+            sound=(sounds, sound_sr, sounds_lens, sounds_span),
+            source=(sources, source_sr, sources_lens, sources_span),
+            label=(labels, labels_lens, labels_span),
+            skew=skew,
         )
 
     def iterator(
@@ -1104,49 +1209,50 @@ class SequenceDataset(AnnotatedDataset):
             if not samples:
                 return None
 
-            xs = [s.sound for s in samples]
-            x0s = [s.source for s in samples]
-            ys = [s.label for s in samples]
-            xlens = [s.sound_length for s in samples]
-            x0lens = [s.source_length for s in samples]
-            ylens = [s.label_length for s in samples]
-            xpos = [s.sound_span for s in samples]
-            x0pos = [s.source_span for s in samples]
-            ypos = [s.label_span for s in samples]
+            sounds, sound_sr, sounds_lens, sounds_span = zip(
+                *[s.sound for s in samples]
+            )
+            sources, source_sr, sources_lens, sources_span = zip(
+                *[s.source for s in samples]
+            )
+            labels, labels_lens, labels_span = zip(*[s.label for s in samples])
 
-            xs = torch.cat(xs, dim=self.batch_dim)
-            x0s = torch.cat(x0s, dim=self.batch_dim)
-            ys = torch.cat(ys, dim=self.batch_dim)
-            xlens = torch.cat(xlens)
-            x0lens = torch.cat(x0lens)
-            ylens = torch.cat(ylens)
-            xpos = torch.cat(xpos)
-            x0pos = torch.cat(x0pos)
-            ypos = torch.cat(ypos)
+            sounds = torch.cat(sounds, dim=self.batch_dim)
+            sources = torch.cat(sources, dim=self.batch_dim)
+            labels = torch.cat(labels, dim=self.batch_dim)
+            sounds_lens = torch.cat(sounds_lens)
+            sources_lens = torch.cat(sources_lens)
+            labels_lens = torch.cat(labels_lens)
+            sounds_span = torch.cat(sounds_span)
+            sources_span = torch.cat(sources_span)
+            labels_span = torch.cat(labels_span)
+            skew = torch.tensor([s.skew for s in samples])
 
             # batch_size = xs.shape[self.batch_dim]
             if batch_max is not None:
-                xs = xs[:batch_max] if self.batch_dim == 0 else xs[:, :batch_max]
-                x0s = x0s[:batch_max] if self.batch_dim == 0 else x0s[:, :batch_max]
-                ys = ys[:batch_max] if self.batch_dim == 0 else ys[:, :batch_max]
-                xlens = xlens[:batch_max]
-                x0lens = x0lens[:batch_max]
-                ylens = ylens[:batch_max]
-                xpos = xpos[:batch_max]
-                x0pos = x0pos[:batch_max]
-                ypos = ypos[:batch_max]
+                sounds = (
+                    sounds[:batch_max] if self.batch_dim == 0 else sounds[:, :batch_max]
+                )
+                sources = (
+                    sources[:batch_max]
+                    if self.batch_dim == 0
+                    else sources[:, :batch_max]
+                )
+                labels = (
+                    labels[:batch_max] if self.batch_dim == 0 else labels[:, :batch_max]
+                )
+                sounds_lens = sounds_lens[:batch_max]
+                sources_lens = sources_lens[:batch_max]
+                labels_lens = labels_lens[:batch_max]
+                sounds_span = sounds_span[:batch_max]
+                sources_span = sources_span[:batch_max]
+                labels_span = labels_span[:batch_max]
 
             return SequenceBatch(
-                sound=xs,
-                sound_length=xlens,
-                sound_span=xpos,
-                source=x0s,
-                source_length=x0lens,
-                source_span=x0pos,
-                rate=samples[0].rate,
-                label=ys,
-                label_length=ylens,
-                label_span=ypos,
+                sound=(sounds, sound_sr, sounds_lens, sounds_span),
+                source=(sources, source_sr, sources_lens, sources_span),
+                label=(labels, labels_lens, labels_span),
+                skew=skew,
             )
 
         return torch.utils.data.DataLoader(
@@ -1261,78 +1367,109 @@ class SymmetricTokenDataset(AnnotatedDataset):
         if sample is None:
             return None
 
-        yint_filt = [
-            (token, intv)
-            for token, intv in zip(sample.label, sample.interval)
-            if (self.acc_range[self.vocabulary[token]][0] <= intv[1] - intv[0])
-            and (intv[1] - intv[0] <= self.acc_range[self.vocabulary[token]][1])
-        ]
-        if len(yint_filt) == 0:
-            return None
-        ys, intervals = zip(*yint_filt)
+        sound, sound_sr, sound_interval = sample.sound
+        source, source_sr, source_interval = sample.source
+        label = sample.label
+        skew = sample.skew
 
-        intervals = [
-            (int(start * sample.rate), int(stop * sample.rate))
-            for start, stop in intervals
+        yint_filt = [
+            (token, snd_intv, src_intv)
+            for token, snd_intv, src_intv in zip(label, sound_interval, source_interval)
+            if (self.acc_range[self.vocabulary[token]][0] <= snd_intv[1] - snd_intv[0])
+            and (snd_intv[1] - snd_intv[0] <= self.acc_range[self.vocabulary[token]][1])
+        ]
+        if not yint_filt:
+            return None
+        label, sound_interval, source_interval = zip(*yint_filt)
+
+        sound_interval = [
+            (int(start * sound_sr), int(stop * sound_sr))
+            for start, stop in sound_interval
+        ]
+        source_interval = [
+            (int(start * source_sr), int(stop * source_sr))
+            for start, stop in source_interval
         ]
         # durations = [stop - start for start, stop in intervals]
-        centers = [(start + stop) // 2 for start, stop in intervals]
+        sound_centers = [(start + stop) // 2 for start, stop in sound_interval]
+        source_centers = [(start + stop) // 2 for start, stop in source_interval]
 
-        context = int(self.context * sample.rate)
+        context = int(self.context * sound_sr)
         pre_context, post_context = math.floor(context / 2), math.ceil(context / 2)
-        intervals = [
-            (center - pre_context, center + post_context) for center in centers
+        sound_interval = [
+            (center - pre_context, center + post_context) for center in sound_centers
         ]
-        yint_filt = [
-            (token, intv)
-            for token, intv in zip(ys, intervals)
-            if intv[0] >= 0 and intv[1] <= len(sample.sound)
+        context = int(self.context * source_sr)
+        pre_context, post_context = math.floor(context / 2), math.ceil(context / 2)
+        source_interval = [
+            (center - pre_context, center + post_context) for center in source_centers
         ]
-        if len(yint_filt) == 0:
-            return None
-        ys, intervals = zip(*yint_filt)
 
-        xs = [sample.sound[start:stop] for start, stop in intervals]
+        yint_filt = [
+            (token, snd_intv, src_intv)
+            for token, snd_intv, src_intv in zip(label, sound_interval, source_interval)
+            if snd_intv[0] >= 0 and snd_intv[1] <= len(sample.sound)
+        ]
+        if not yint_filt:
+            return None
+        label, sound_interval, source_interval = zip(*yint_filt)
+
         scale_factor = {
             "faster": 1.0 / self.scale_factor,
             "base": 1.0,
             "slower": self.scale_factor,
         }[self.rate]
-        target_t = int(context * scale_factor)
-        freqbins = sample.sound.shape[1]
 
+        sounds = [sound[start:stop] for start, stop in sound_interval]
+        target_t = int(self.context * sound_sr * scale_factor)
+        freqbins = sound.shape[1]
         if target_t != context:
             t0 = np.linspace(1, context, context)
             t1 = np.linspace(1, context, target_t)
             freqs = np.linspace(1, freqbins, freqbins)
 
-            for i, xi in enumerate(xs):
+            for i, xi in enumerate(sounds):
                 if waveform or self.audio_transform is None:
                     # x[i] = librosa.effects.time_stretch(xi, context/target_t)
-                    pass
+                    raise NotImplementedError()
                 else:
-                    xs[i] = sp.interpolate.RectBivariateSpline(t0, freqs, xi)(t1, freqs)
+                    sounds[i] = sp.interpolate.RectBivariateSpline(t0, freqs, xi)(
+                        t1, freqs
+                    )
 
-        xlens = torch.tensor([len(x) for x in xs], dtype=torch.int)
-        ylens = torch.ones_like(xlens, dtype=torch.int)
-        xs = torch.stack(xs, dim=0).float()
-        ys = torch.stack(ys, dim=0).int()
+        sources = [source[start:stop] for start, stop in source_interval]
+        target_t = int(self.context * source_sr * scale_factor)
+        freqbins = source.shape[1]
+        if target_t != context:
+            t0 = np.linspace(1, context, context)
+            t1 = np.linspace(1, context, target_t)
+            freqs = np.linspace(1, freqbins, freqbins)
 
-        xs = xs[xlens != 0]
-        ys = ys[xlens != 0]
-        xlens = xlens[xlens != 0]
-        ylens = ylens[ylens != 0]
+            for i, xi in enumerate(sources):
+                if waveform or self.audio_transform is None:
+                    # x[i] = librosa.effects.time_stretch(xi, context/target_t)
+                    raise NotImplementedError()
+                else:
+                    sources[i] = sp.interpolate.RectBivariateSpline(t0, freqs, xi)(
+                        t1, freqs
+                    )
+
+        sounds_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
+        sources_lens = torch.tensor([len(x) for x in sources], dtype=torch.int)
+        sounds = torch.stack(sounds, dim=0).float()
+        sources = torch.stack(sources, dim=0).float()
+        label = torch.stack(label, dim=0).int()
+
+        sounds = sounds[sounds_lens != 0]
+        label = label[sounds_lens != 0]
+        sounds_lens = sounds_lens[sounds_lens != 0]
 
         # TODO clean sources not handled
         return AnnotatedTokenizedSample(
-            sound=xs,
-            sound_length=xlens,
-            source=xs,
-            source_length=xlens,
-            rate=sample.rate,
-            label=ys,
-            label_length=ylens,
-            interval=sample.interval,
+            sound=(sounds, sound_sr, sounds_lens),
+            source=(sources, source_sr, sources_lens),
+            label=label,
+            skew=skew,
         )
 
     def iterator(
@@ -1343,40 +1480,27 @@ class SymmetricTokenDataset(AnnotatedDataset):
     ):
         def collate_fn(
             samples: list[AnnotatedTokenizedSample],
-        ) -> Optional[AnnotatedBatch]:
-            if any(s is None or s.label is None for s in samples):
+        ) -> Optional[AnnotatedTokenizedBatch]:
+            if any(s is None for s in samples):
                 return None
 
-            xs, xlens, x0s, x0lens, ys = zip(
-                *[
-                    (s.sound, s.sound_length, s.source, s.source_length, s.label)
-                    for s in samples
-                ]
-            )
+            sounds, sound_sr, sounds_lens = zip(*[s.sound for s in samples])
+            sources, source_sr, sources_lens = zip(*[s.source for s in samples])
+            labels = [s.label for s in samples]
 
-            xs = [s.sound for s in samples]
-            x0s = [s.source for s in samples]
-            ys = [s.label for s in samples]
-            xlens = [s.sound_length for s in samples]
-            x0lens = [s.source_length for s in samples]
-            ylens = [s.label_length for s in samples]
-
-            xs = torch.cat(xs, dim=self.batch_dim)
-            x0s = torch.cat(x0s, dim=self.batch_dim)
-            ys = torch.cat(ys, dim=self.batch_dim)
-            xlens = torch.cat(xlens)
-            x0lens = torch.cat(x0lens)
-            ylens = torch.cat(ylens)
+            sounds = torch.cat(sounds, dim=self.batch_dim)
+            sources = torch.cat(sources, dim=self.batch_dim)
+            labels = torch.cat(labels, dim=self.batch_dim)
+            sounds_lens = torch.cat(sounds_lens)
+            sources_lens = torch.cat(sources_lens)
+            skew = torch.tensor([s.skew for s in samples])
 
             # clean sources not handled
-            return AnnotatedBatch(
-                sound=xs,
-                sound_length=xlens,
-                source=x0s,
-                source_length=x0lens,
-                rate=samples[0].rate,
-                label=ys,
-                label_length=ylens,
+            return AnnotatedTokenizedBatch(
+                sound=(sounds, sound_sr, sounds_lens),
+                source=(sources, source_sr, sources_lens),
+                label=labels,
+                skew=skew,
             )
 
         return torch.utils.data.DataLoader(
@@ -1441,458 +1565,459 @@ class SymmetricTokenDataset(AnnotatedDataset):
         return xs, ys
 
 
-class MultiAnnotatedDataset(SoundDataset):
-    def __init__(
-        self,
-        sounds,
-        annotations,
-        vocabulary,
-        *,
-        value_nil=0,
-        normalize=False,
-        ignore_silence=True,
-        **kwargs,
-    ):
-        super().__init__(sounds, **kwargs)
-        self.annotations = annotations
-        self.vocabulary = vocabulary
-        self.stressed = {
-            k in ("phones", "syllables") and any(is_stressed(w) for w in v)
-            for k, v in vocabulary.items()
-        }
-        self.value_nil = value_nil
-        self.normalize = normalize
-        self.spaced = {k: (" " in v) for k, v in vocabulary.items()}
-        self.include_na = {k: ("[UNK]" in v) for k, v in vocabulary.items()}
-        self.ignore_silence = ignore_silence
-        self.targets = sorted(vocabulary.keys())
-        self.key = {
-            k: {tok: i for i, tok in enumerate(v)} for k, v in vocabulary.items()
-        }
-
-    @torch.no_grad()
-    def __getitem__(self, idx: int, waveform: bool = False):
-        sample = super().__getitem__(idx, waveform=waveform)
-
-        p = self._annotation(self.annotations[idx], "phones", skew=sample.skew)
-        s = self._annotation(self.annotations[idx], "syllables", skew=sample.skew)
-        w = self._annotation(self.annotations[idx], "words", skew=sample.skew)
-
-        return sample.sound, p, s, w
-
-    def _spaced_textgrid(self, textgrid):
-        it_phone = iter(textgrid["phones"])
-        phone = next(it_phone)
-
-        phones = []
-        for word in textgrid["words"]:
-            if word.text in ["", "sp", "spn", "sil", "<unk>"]:
-                continue
-
-            try:
-                while phone.xmin < word.xmin - 1e-3:
-                    phone = next(it_phone)
-            except StopIteration:
-                break
-
-            if phone.xmin >= word.xmax + 1e-3:
-                continue
-
-            while phone.xmin < word.xmax - 1e-3:
-                phones.append(phone)
-                phone = next(it_phone)
-
-            if self.spaced["phones"] and len(phones) > 0:
-                phones.append(textgrids.Interval(" ", phones[-1].xmax, phones[-1].xmax))
-
-        return textgrids.Tier(phones)
-
-    def _syllabized_textgrid(self, textgrid):
-        it_phone = iter(textgrid["phones"])
-        phone = next(it_phone)
-
-        syllables = []
-        for word in textgrid["words"]:
-            if word.text in ["", "sp", "spn", "sil", "<unk>"]:
-                continue
-
-            try:
-                while phone.xmin < word.xmin - 1e-3:
-                    phone = next(it_phone)
-            except StopIteration:
-                break
-
-            if phone.xmin >= word.xmax + 1e-3:
-                continue
-
-            phones = []
-            while phone.xmin < word.xmax - 1e-3:
-                phones.append(phone)
-                phone = next(it_phone)
-
-            syllbs = syllabize([p.text for p in phones], stressed=True)
-            for syll in syllbs:
-                nsyll = len(syll.split("-"))
-                syllables.append(
-                    textgrids.Interval(syll, phones[0].xmin, phones[nsyll - 1].xmax)
-                )
-                phones = phones[nsyll:]
-
-            if self.spaced["syllables"] and len(syllbs) > 0:
-                syllables.append(
-                    textgrids.Interval(" ", syllables[-1].xmax, syllables[-1].xmax)
-                )
-
-        return textgrids.Tier(syllables)
-
-    def _annotation(
-        self, annotation, target_type, ignore_silence=True, skew=None
-    ) -> tuple[Tensor, list[tuple[float, float]]]:
-        fmt, filepath = annotation.split(":")
-
-        if fmt == "libri":
-            # read annotation file
-            textgrid = textgrids.TextGrid(filepath)
-            if target_type == "phones":
-                textgrid = self._spaced_textgrid(textgrid)
-            elif target_type == "syllables":
-                textgrid = self._syllabized_textgrid(textgrid)
-            else:
-                textgrid = textgrid[target_type]
-            # drop silence tokens
-            textgrid = (
-                [item for item in textgrid if item.text not in ["", "sp", "spn", "sil"]]
-                if ignore_silence
-                else textgrid
-            )
-            # transform to standard labels
-            for item in textgrid:
-                item.text = item.text.upper()
-
-            target = [item.text for item in textgrid]
-            interv = [(item.xmin, item.xmax) for item in textgrid]
-        elif fmt == "swc":
-            raise NotImplementedError(
-                "Spoken Wikipedia annotation not yet implemented!"
-            )
-        elif fmt == "tedlium":
-            raise NotImplementedError("TED-LIUM r3 annotation not yet implemented!")
-        else:
-            raise RuntimeError("Unknown annotation format:", fmt)
-
-        if target_type in ["phones", "syllables"] and not self.stressed:
-            target = [re.sub(r"([A-Z]+)[0-9]", r"\g<1>", token) for token in target]
-
-        if target_type == "words" and self.normalize:
-            expanded_target, expanded_interv = [], []
-            for token, intv in zip(target, interv):
-                subtokens = normalize_token(token)  # , self.vocabulary)
-                expanded_target += subtokens
-                expanded_interv += [
-                    intv
-                    if not is_subtoken(t)
-                    else (intv[:1] * 2 if is_prefix(t) else intv[1:] * 2)
-                    for t in subtokens
-                ]
-            target, interv = expanded_target, expanded_interv
-
-        if self.key[target_type]:
-            encoded_target, encoded_interv = [], []
-            for token, intv in zip(target, interv):
-                if token in self.key[target_type]:
-                    pass
-                elif self.include_na[target_type]:
-                    token = "[UNK]"
-                else:
-                    continue
-
-                encoded_target.append(self.key[target_type][token])
-                encoded_interv.append(intv)
-            target, interv = encoded_target, encoded_interv
-
-        if skew is not None:
-            interv = [(start * skew, stop * skew) for start, stop in interv]
-
-        return torch.tensor(target), interv
-
-
-class MultiSymmetricTokenDataset(MultiAnnotatedDataset):
-    def __init__(
-        self,
-        sounds,
-        annotations,
-        vocabulary,
-        *,
-        base_rate="moderate",
-        context=6,
-        alignment="center",
-        scale_factor=np.sqrt(2),
-        # filter_vocab=True,
-        label_sr=100,
-        **kwargs,
-    ):
-        assert base_rate in [
-            "fast",
-            "moderate",
-            "slow",
-            "no_ext",
-            "any",
-            "c10",
-            "c20",
-            "c30",
-            "c50",
-            "c90",
-            "c95",
-        ]
-        assert alignment in ["left", "center", "right"]
-
-        filename = "librispeech-statistics-words.npy"
-        if os.path.exists(filename):
-            stats = np.load(filename, allow_pickle=True).item()
-        elif os.path.exists(os.path.join("stats", filename)):
-            stats = np.load(os.path.join("stats", filename), allow_pickle=True).item()
-        else:
-            raise RuntimeError(f'Unit statistic file "{filename}" not found.')
-        lengths = dict()
-        for k, length in zip(stats["identity"], stats["length"]):
-            if k in lengths:
-                lengths[k].append(length)
-            else:
-                lengths[k] = [length]
-
-        alpha = 0.9
-        max_stretch = scale_factor**2
-        var_range = {
-            "fast": (0.05, 0.15),
-            "moderate": (0.45, 0.55),
-            "slow": (0.85, 0.95),
-            "no_ext": (0.05, 0.95),
-            "any": (0.00, 1.00),
-            "c10": (0.45, 0.55),
-            "c20": (0.4, 0.6),
-            "c30": (0.35, 0.65),
-            "c50": (0.25, 0.75),
-            "c90": (0.05, 0.95),
-            "c95": (0.025, 0.975),
-        }[base_rate]
-        anchor_vocabulary = [
-            k
-            for k, length in lengths.items()
-            if (vocabulary["words"] is None or k in vocabulary["words"])
-            and len(length) >= 100
-            and (
-                np.quantile(length, 0.5 + alpha / 2)
-                / np.quantile(length, 0.5 - alpha / 2)
-                >= max_stretch
-            )
-        ]
-        acc_range = {
-            k: (
-                np.quantile(lengths[k], var_range[0]),
-                np.quantile(lengths[k], var_range[1]),
-            )
-            for k in anchor_vocabulary
-        }
-
-        super().__init__(sounds, annotations, vocabulary, **kwargs)
-        self.base_rate = base_rate
-        self.context = context
-        self.alignment = alignment
-        self.scale_factor = scale_factor
-        self.var_range = var_range
-        self.acc_range = acc_range
-        self.label_sr = label_sr
-        self.anchor_vocabulary = anchor_vocabulary
-
-    def __getitem__(self, idx: int, waveform: bool = False):
-        x, p, s, w = super().__getitem__(idx, waveform=waveform)
-        out_sr = self.in_sr if waveform or self.audio_transform is None else self.out_sr
-        if x is None:
-            return (None,) * 5
-
-        anchors = [
-            (tok, intv)
-            for tok, intv in zip(*w)
-            if self.vocabulary["words"][tok] in self.anchor_vocabulary
-            and self.acc_range[self.vocabulary["words"][tok]][0] <= intv[1] - intv[0]
-            and intv[1] - intv[0] <= self.acc_range[self.vocabulary["words"][tok]][1]
-        ]
-        if len(anchors) == 0:
-            return (None,) * 5
-
-        y, intervals = zip(*anchors)
-
-        y_len = int(len(x) / out_sr * self.label_sr)
-        p_vec = torch.zeros(y_len, dtype=torch.int)
-        s_vec = torch.zeros(y_len, dtype=torch.int)
-        w_vec = torch.zeros(y_len, dtype=torch.int)
-        for tok, (start, stop) in zip(*p):
-            p_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
-        for tok, (start, stop) in zip(*s):
-            s_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
-        for tok, (start, stop) in zip(*w):
-            w_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
-
-        x_intervals = [
-            (int(start * out_sr), int(stop * out_sr)) for start, stop in intervals
-        ]
-        y_intervals = [
-            (int(start * self.label_sr), int(stop * self.label_sr))
-            for start, stop in intervals
-        ]
-
-        # x_durations = [stop - start for start, stop in x_intervals]
-        # y_durations = [stop - start for start, stop in y_intervals]
-
-        x_centers = [(start + stop) // 2 for start, stop in x_intervals]
-        y_centers = [(start + stop) // 2 for start, stop in y_intervals]
-
-        x_context = int(self.context * out_sr)
-        y_context = int(self.context * self.label_sr)
-
-        x_pre_context, x_post_context = (
-            math.floor(x_context / 2),
-            math.ceil(x_context / 2),
-        )
-        y_pre_context, y_post_context = (
-            math.floor(y_context / 2),
-            math.ceil(y_context / 2),
-        )
-
-        x_intervals = [
-            (center - x_pre_context, center + x_post_context) for center in x_centers
-        ]
-        y_intervals = [
-            (center - y_pre_context, center + y_post_context) for center in y_centers
-        ]
-
-        anchors = [
-            (token, x_intv, y_intv)
-            for token, x_intv, y_intv in zip(y, x_intervals, y_intervals)
-            if x_intv[0] >= 0
-            and x_intv[1] <= len(x)
-            and y_intv[0] >= 0
-            and y_intv[1] <= y_len
-        ]
-        if len(anchors) == 0:
-            return (None,) * 5
-        y, x_intervals, y_intervals = zip(*anchors)
-
-        x = [x[start:stop] for start, stop in x_intervals]
-        p = [p_vec[start:stop] for start, stop in y_intervals]
-        s = [s_vec[start:stop] for start, stop in y_intervals]
-        w = [w_vec[start:stop] for start, stop in y_intervals]
-        nonempty = [len(_) > 0 for _ in x]
-        if len(nonempty) == 0:
-            return (None,) * 5
-
-        x = torch.stack(x)[nonempty]
-        y = torch.tensor(y)[nonempty]
-        p = torch.stack(p)[nonempty]
-        s = torch.stack(s)[nonempty]
-        w = torch.stack(w)[nonempty]
-
-        return x, y, p, s, w
-
-    def iterator(
-        self,
-        batch_size: int = 1,
-        shuffle: bool = False,
-        num_workers: int = 0,
-        # flat_labels=False
-    ):
-        def collate_fn(xpsw):
-            xs, ys, ps, ss, ws = zip(*xpsw)
-            if any(y is None for y in ys):
-                return (None,) * 5
-
-            xs = np.concatenate(xs, axis=0)
-            ys = np.concatenate(ys, axis=0)
-            ps = np.concatenate(ps, axis=0)
-            ss = np.concatenate(ss, axis=0)
-            ws = np.concatenate(ws, axis=0)
-
-            xs = torch.as_tensor(xs)
-            ys = torch.as_tensor(ys)
-            ps = torch.as_tensor(ps)
-            ss = torch.as_tensor(ss)
-            ws = torch.as_tensor(ws)
-
-            if not self.batch_first:
-                xs = xs.transpose(0, 1).contiguous()
-                ys = ys.transpose(0, 1).contiguous()
-                ps = ps.transpose(0, 1).contiguous()
-                ss = ss.transpose(0, 1).contiguous()
-                ws = ws.transpose(0, 1).contiguous()
-
-            return xs, ys, ps, ss, ws
-
-        return torch.utils.data.DataLoader(
-            self,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            num_workers=num_workers,
-            collate_fn=collate_fn,
-        )
-
-    def take(
-        self,
-        n=int(1e9),
-        shuffle=False,
-        batch_size=1,
-        num_workers=0,
-        max_token_per_word=None,
-        return_labels=True,
-    ):
-        token_per_word = dict()
-        xs, ys, ps, ss, ws = [], [], [], [], []
-
-        pbar = tqdm(range(n))
-        it = iter(
-            self.iterator(
-                shuffle=shuffle, batch_size=batch_size, num_workers=num_workers
-            )
-        )
-        while len(xs) < n:
-            try:
-                x, y, p, s, w = next(it)
-            except StopIteration:
-                break
-
-            if x is None or y is None:
-                continue
-
-            batch_count = 0
-            for xi, yi, pi, si, wi in zip(x, y, p, s, w):
-                yi = yi.item()
-                if yi not in token_per_word:
-                    token_per_word[yi] = 0
-
-                if (
-                    max_token_per_word is None
-                    or token_per_word[yi] < max_token_per_word
-                ):
-                    xs.append(xi)
-                    ys.append(yi)
-                    ps.append(pi)
-                    ss.append(si)
-                    ws.append(wi)
-                    token_per_word[yi] += 1
-                    batch_count += 1
-
-            pbar.update(batch_count)
-
-        xs = torch.stack(xs, dim=0)[:n]
-        ys = (
-            np.array([self.vocabulary["words"][y] for y in ys])[:n]
-            if return_labels
-            else torch.tensor(ys)[:n]
-        )
-        ps = torch.stack(ps)[:n]
-        ss = torch.stack(ss)[:n]
-        ws = torch.stack(ws)[:n]
-
-        return xs, ys, ps, ss, ws
+# class MultiAnnotatedDataset(SoundDataset):
+#     def __init__(
+#         self,
+#         sounds,
+#         annotations,
+#         vocabulary,
+#         *,
+#         value_nil=0,
+#         normalize=False,
+#         ignore_silence=True,
+#         **kwargs,
+#     ):
+#         super().__init__(sounds, **kwargs)
+#         self.annotations = annotations
+#         self.vocabulary = vocabulary
+#         self.stressed = {
+#             k in ("phones", "syllables") and any(is_stressed(w) for w in v)
+#             for k, v in vocabulary.items()
+#         }
+#         self.value_nil = value_nil
+#         self.normalize = normalize
+#         self.spaced = {k: (" " in v) for k, v in vocabulary.items()}
+#         self.include_na = {k: ("[UNK]" in v) for k, v in vocabulary.items()}
+#         self.ignore_silence = ignore_silence
+#         self.targets = sorted(vocabulary.keys())
+#         self.key = {
+#             k: {tok: i for i, tok in enumerate(v)} for k, v in vocabulary.items()
+#         }
+#
+#     @torch.no_grad()
+#     def __getitem__(self, idx: int, waveform: bool = False):
+#         sample = super().__getitem__(idx, waveform=waveform)
+#
+#         p = self._annotation(self.annotations[idx], "phones", skew=sample.skew)
+#         s = self._annotation(self.annotations[idx], "syllables", skew=sample.skew)
+#         w = self._annotation(self.annotations[idx], "words", skew=sample.skew)
+#
+#         return sample.sound, p, s, w
+#
+#     def _spaced_textgrid(self, textgrid):
+#         it_phone = iter(textgrid["phones"])
+#         phone = next(it_phone)
+#
+#         phones = []
+#         for word in textgrid["words"]:
+#             if word.text in ["", "sp", "spn", "sil", "<unk>"]:
+#                 continue
+#
+#             try:
+#                 while phone.xmin < word.xmin - 1e-3:
+#                     phone = next(it_phone)
+#             except StopIteration:
+#                 break
+#
+#             if phone.xmin >= word.xmax + 1e-3:
+#                 continue
+#
+#             while phone.xmin < word.xmax - 1e-3:
+#                 phones.append(phone)
+#                 phone = next(it_phone)
+#
+#             if self.spaced["phones"] and len(phones) > 0:
+#                 phones.append(textgrids.Interval(" ", phones[-1].xmax, phones[-1].xmax))
+#
+#         return textgrids.Tier(phones)
+#
+#     def _syllabized_textgrid(self, textgrid):
+#         it_phone = iter(textgrid["phones"])
+#         phone = next(it_phone)
+#
+#         syllables = []
+#         for word in textgrid["words"]:
+#             if word.text in ["", "sp", "spn", "sil", "<unk>"]:
+#                 continue
+#
+#             try:
+#                 while phone.xmin < word.xmin - 1e-3:
+#                     phone = next(it_phone)
+#             except StopIteration:
+#                 break
+#
+#             if phone.xmin >= word.xmax + 1e-3:
+#                 continue
+#
+#             phones = []
+#             while phone.xmin < word.xmax - 1e-3:
+#                 phones.append(phone)
+#                 phone = next(it_phone)
+#
+#             syllbs = syllabize([p.text for p in phones], stressed=True)
+#             for syll in syllbs:
+#                 nsyll = len(syll.split("-"))
+#                 syllables.append(
+#                     textgrids.Interval(syll, phones[0].xmin, phones[nsyll - 1].xmax)
+#                 )
+#                 phones = phones[nsyll:]
+#
+#             if self.spaced["syllables"] and len(syllbs) > 0:
+#                 syllables.append(
+#                     textgrids.Interval(" ", syllables[-1].xmax, syllables[-1].xmax)
+#                 )
+#
+#         return textgrids.Tier(syllables)
+#
+#     def _annotation(
+#         self, annotation, target_type, ignore_silence=True, skew=None
+#     ) -> tuple[Tensor, list[tuple[float, float]]]:
+#         fmt, filepath = annotation.split(":")
+#
+#         if fmt == "libri":
+#             # read annotation file
+#             textgrid = textgrids.TextGrid(filepath)
+#             if target_type == "phones":
+#                 textgrid = self._spaced_textgrid(textgrid)
+#             elif target_type == "syllables":
+#                 textgrid = self._syllabized_textgrid(textgrid)
+#             else:
+#                 textgrid = textgrid[target_type]
+#             # drop silence tokens
+#             textgrid = (
+#                 [item for item in textgrid if item.text not in ["", "sp", "spn", "sil"]]
+#                 if ignore_silence
+#                 else textgrid
+#             )
+#             # transform to standard labels
+#             for item in textgrid:
+#                 item.text = item.text.upper()
+#
+#             target = [item.text for item in textgrid]
+#             interv = [(item.xmin, item.xmax) for item in textgrid]
+#         elif fmt == "swc":
+#             raise NotImplementedError(
+#                 "Spoken Wikipedia annotation not yet implemented!"
+#             )
+#         elif fmt == "tedlium":
+#             raise NotImplementedError("TED-LIUM r3 annotation not yet implemented!")
+#         else:
+#             raise RuntimeError("Unknown annotation format:", fmt)
+#
+#         if target_type in ["phones", "syllables"] and not self.stressed:
+#             target = [re.sub(r"([A-Z]+)[0-9]", r"\g<1>", token) for token in target]
+#
+#         if target_type == "words" and self.normalize:
+#             expanded_target, expanded_interv = [], []
+#             for token, intv in zip(target, interv):
+#                 subtokens = normalize_token(token)  # , self.vocabulary)
+#                 expanded_target += subtokens
+#                 expanded_interv += [
+#                     intv
+#                     if not is_subtoken(t)
+#                     else (intv[:1] * 2 if is_prefix(t) else intv[1:] * 2)
+#                     for t in subtokens
+#                 ]
+#             target, interv = expanded_target, expanded_interv
+#
+#         if self.key[target_type]:
+#             encoded_target, encoded_interv = [], []
+#             for token, intv in zip(target, interv):
+#                 if token in self.key[target_type]:
+#                     pass
+#                 elif self.include_na[target_type]:
+#                     token = "[UNK]"
+#                 else:
+#                     continue
+#
+#                 encoded_target.append(self.key[target_type][token])
+#                 encoded_interv.append(intv)
+#             target, interv = encoded_target, encoded_interv
+#
+#         if skew is not None:
+#             interv = [(start * skew, stop * skew) for start, stop in interv]
+#
+#         return torch.tensor(target), interv
+#
+#
+# class MultiSymmetricTokenDataset(MultiAnnotatedDataset):
+#     def __init__(
+#         self,
+#         sounds,
+#         annotations,
+#         vocabulary,
+#         *,
+#         base_rate="moderate",
+#         context=6,
+#         alignment="center",
+#         scale_factor=np.sqrt(2),
+#         # filter_vocab=True,
+#         label_sr=100,
+#         **kwargs,
+#     ):
+#         assert base_rate in [
+#             "fast",
+#             "moderate",
+#             "slow",
+#             "no_ext",
+#             "any",
+#             "c10",
+#             "c20",
+#             "c30",
+#             "c50",
+#             "c90",
+#             "c95",
+#         ]
+#         assert alignment in ["left", "center", "right"]
+#
+#         filename = "librispeech-statistics-words.npy"
+#         if os.path.exists(filename):
+#             stats = np.load(filename, allow_pickle=True).item()
+#         elif os.path.exists(os.path.join("stats", filename)):
+#             stats = np.load(os.path.join("stats", filename), allow_pickle=True).item()
+#         else:
+#             raise RuntimeError(f'Unit statistic file "{filename}" not found.')
+#         lengths = dict()
+#         for k, length in zip(stats["identity"], stats["length"]):
+#             if k in lengths:
+#                 lengths[k].append(length)
+#             else:
+#                 lengths[k] = [length]
+#
+#         alpha = 0.9
+#         max_stretch = scale_factor**2
+#         var_range = {
+#             "fast": (0.05, 0.15),
+#             "moderate": (0.45, 0.55),
+#             "slow": (0.85, 0.95),
+#             "no_ext": (0.05, 0.95),
+#             "any": (0.00, 1.00),
+#             "c10": (0.45, 0.55),
+#             "c20": (0.4, 0.6),
+#             "c30": (0.35, 0.65),
+#             "c50": (0.25, 0.75),
+#             "c90": (0.05, 0.95),
+#             "c95": (0.025, 0.975),
+#         }[base_rate]
+#         anchor_vocabulary = [
+#             k
+#             for k, length in lengths.items()
+#             if (vocabulary["words"] is None or k in vocabulary["words"])
+#             and len(length) >= 100
+#             and (
+#                 np.quantile(length, 0.5 + alpha / 2)
+#                 / np.quantile(length, 0.5 - alpha / 2)
+#                 >= max_stretch
+#             )
+#         ]
+#         acc_range = {
+#             k: (
+#                 np.quantile(lengths[k], var_range[0]),
+#                 np.quantile(lengths[k], var_range[1]),
+#             )
+#             for k in anchor_vocabulary
+#         }
+#
+#         super().__init__(sounds, annotations, vocabulary, **kwargs)
+#         self.base_rate = base_rate
+#         self.context = context
+#         self.alignment = alignment
+#         self.scale_factor = scale_factor
+#         self.var_range = var_range
+#         self.acc_range = acc_range
+#         self.label_sr = label_sr
+#         self.anchor_vocabulary = anchor_vocabulary
+#
+#     def __getitem__(self, idx: int, waveform: bool = False):
+#         x, p, s, w = super().__getitem__(idx, waveform=waveform)
+#         out_sr = self.in_sr if waveform or self.audio_transform is None else self.out_sr
+#         if x is None:
+#             return (None,) * 5
+#
+#         anchors = [
+#             (tok, intv)
+#             for tok, intv in zip(*w)
+#             if self.vocabulary["words"][tok] in self.anchor_vocabulary
+#             and self.acc_range[self.vocabulary["words"][tok]][0] <= intv[1] - intv[0]
+#             and intv[1] - intv[0] <= self.acc_range[self.vocabulary["words"][tok]][1]
+#         ]
+#         if len(anchors) == 0:
+#             return (None,) * 5
+#
+#         y, intervals = zip(*anchors)
+#
+#         y_len = int(len(x) / out_sr * self.label_sr)
+#         p_vec = torch.zeros(y_len, dtype=torch.int)
+#         s_vec = torch.zeros(y_len, dtype=torch.int)
+#         w_vec = torch.zeros(y_len, dtype=torch.int)
+#         for tok, (start, stop) in zip(*p):
+#             p_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
+#         for tok, (start, stop) in zip(*s):
+#             s_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
+#         for tok, (start, stop) in zip(*w):
+#             w_vec[int(start * self.label_sr) : int(stop * self.label_sr)] = tok
+#
+#         x_intervals = [
+#             (int(start * out_sr), int(stop * out_sr)) for start, stop in intervals
+#         ]
+#         y_intervals = [
+#             (int(start * self.label_sr), int(stop * self.label_sr))
+#             for start, stop in intervals
+#         ]
+#
+#         # x_durations = [stop - start for start, stop in x_intervals]
+#         # y_durations = [stop - start for start, stop in y_intervals]
+#
+#         x_centers = [(start + stop) // 2 for start, stop in x_intervals]
+#         y_centers = [(start + stop) // 2 for start, stop in y_intervals]
+#
+#         x_context = int(self.context * out_sr)
+#         y_context = int(self.context * self.label_sr)
+#
+#         x_pre_context, x_post_context = (
+#             math.floor(x_context / 2),
+#             math.ceil(x_context / 2),
+#         )
+#         y_pre_context, y_post_context = (
+#             math.floor(y_context / 2),
+#             math.ceil(y_context / 2),
+#         )
+#
+#         x_intervals = [
+#             (center - x_pre_context, center + x_post_context) for center in x_centers
+#         ]
+#         y_intervals = [
+#             (center - y_pre_context, center + y_post_context) for center in y_centers
+#         ]
+#
+#         anchors = [
+#             (token, x_intv, y_intv)
+#             for token, x_intv, y_intv in zip(y, x_intervals, y_intervals)
+#             if x_intv[0] >= 0
+#             and x_intv[1] <= len(x)
+#             and y_intv[0] >= 0
+#             and y_intv[1] <= y_len
+#         ]
+#         if len(anchors) == 0:
+#             return (None,) * 5
+#         y, x_intervals, y_intervals = zip(*anchors)
+#
+#         x = [x[start:stop] for start, stop in x_intervals]
+#         p = [p_vec[start:stop] for start, stop in y_intervals]
+#         s = [s_vec[start:stop] for start, stop in y_intervals]
+#         w = [w_vec[start:stop] for start, stop in y_intervals]
+#         nonempty = [len(_) > 0 for _ in x]
+#         if len(nonempty) == 0:
+#             return (None,) * 5
+#
+#         x = torch.stack(x)[nonempty]
+#         y = torch.tensor(y)[nonempty]
+#         p = torch.stack(p)[nonempty]
+#         s = torch.stack(s)[nonempty]
+#         w = torch.stack(w)[nonempty]
+#
+#         return x, y, p, s, w
+#
+#     def iterator(
+#         self,
+#         batch_size: int = 1,
+#         shuffle: bool = False,
+#         num_workers: int = 0,
+#         # flat_labels=False
+#     ):
+#         def collate_fn(xpsw):
+#             xs, ys, ps, ss, ws = zip(*xpsw)
+#             if any(y is None for y in ys):
+#                 return (None,) * 5
+#
+#             xs = np.concatenate(xs, axis=0)
+#             ys = np.concatenate(ys, axis=0)
+#             ps = np.concatenate(ps, axis=0)
+#             ss = np.concatenate(ss, axis=0)
+#             ws = np.concatenate(ws, axis=0)
+#
+#             xs = torch.as_tensor(xs)
+#             ys = torch.as_tensor(ys)
+#             ps = torch.as_tensor(ps)
+#             ss = torch.as_tensor(ss)
+#             ws = torch.as_tensor(ws)
+#
+#             if not self.batch_first:
+#                 xs = xs.transpose(0, 1).contiguous()
+#                 ys = ys.transpose(0, 1).contiguous()
+#                 ps = ps.transpose(0, 1).contiguous()
+#                 ss = ss.transpose(0, 1).contiguous()
+#                 ws = ws.transpose(0, 1).contiguous()
+#
+#             return xs, ys, ps, ss, ws
+#
+#         return torch.utils.data.DataLoader(
+#             self,
+#             batch_size=batch_size,
+#             shuffle=shuffle,
+#             num_workers=num_workers,
+#             collate_fn=collate_fn,
+#         )
+#
+#     def take(
+#         self,
+#         n=int(1e9),
+#         shuffle=False,
+#         batch_size=1,
+#         num_workers=0,
+#         max_token_per_word=None,
+#         return_labels=True,
+#     ):
+#         token_per_word = dict()
+#         xs, ys, ps, ss, ws = [], [], [], [], []
+#
+#         pbar = tqdm(range(n))
+#         it = iter(
+#             self.iterator(
+#                 shuffle=shuffle, batch_size=batch_size, num_workers=num_workers
+#             )
+#         )
+#         while len(xs) < n:
+#             try:
+#                 x, y, p, s, w = next(it)
+#             except StopIteration:
+#                 break
+#
+#             if x is None or y is None:
+#                 continue
+#
+#             batch_count = 0
+#             for xi, yi, pi, si, wi in zip(x, y, p, s, w):
+#                 yi = yi.item()
+#                 if yi not in token_per_word:
+#                     token_per_word[yi] = 0
+#
+#                 if (
+#                     max_token_per_word is None
+#                     or token_per_word[yi] < max_token_per_word
+#                 ):
+#                     xs.append(xi)
+#                     ys.append(yi)
+#                     ps.append(pi)
+#                     ss.append(si)
+#                     ws.append(wi)
+#                     token_per_word[yi] += 1
+#                     batch_count += 1
+#
+#             pbar.update(batch_count)
+#
+#         xs = torch.stack(xs, dim=0)[:n]
+#         ys = (
+#             np.array([self.vocabulary["words"][y] for y in ys])[:n]
+#             if return_labels
+#             else torch.tensor(ys)[:n]
+#         )
+#         ps = torch.stack(ps)[:n]
+#         ss = torch.stack(ss)[:n]
+#         ws = torch.stack(ws)[:n]
+#
+#         return xs, ys, ps, ss, ws
+#
 
 
 def _pad_axis(array: Tensor, pre: int = 0, post: int = 0, axis: int = 0) -> Tensor:

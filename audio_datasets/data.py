@@ -153,7 +153,7 @@ def FSD2019(basepath=ROOT_DATA_DIR + "/FSDKaggle2019") -> list[str]:
     tracks = [
         table["fname"][i]
         for i in range(len(table))
-        if all(label in groups for label in table["labels"][i].item().split(","))
+        if all(label in groups for label in str(table["labels"][i]).split(","))
     ]
     return [
         _ufmt(f"{basepath}/FSDKaggle2019.audio_train_curated/{track}")
