@@ -28,6 +28,12 @@ Interval = list[tuple[float, float]]
 
 @dataclass
 class SoundSample:
+    """
+    sound: (audio: Tensor, sr: int)
+    source: (audio: Tensor, sr: int)
+    skew: float
+    """
+
     sound: tuple[Tensor, int]
     source: tuple[Tensor, int]
     skew: float
@@ -35,6 +41,13 @@ class SoundSample:
 
 @dataclass
 class AnnotatedSample:
+    """
+    sound: (audio: Tensor, sr: int, intervals: Interval)
+    source: (audio: Tensor, sr: int, intervals: Interval)
+    label: Tensor
+    skew: float
+    """
+
     sound: tuple[Tensor, int, Interval]
     source: tuple[Tensor, int, Interval]
     label: Tensor
@@ -43,6 +56,12 @@ class AnnotatedSample:
 
 @dataclass
 class TokenizedSample:
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor)
+    skew: float
+    """
+
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     skew: float
@@ -50,24 +69,42 @@ class TokenizedSample:
 
 @dataclass
 class AnnotatedTokenizedSample:
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor)
+    label: Tensor
+    skew: float
+    """
+
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     label: Tensor
-    # interval: Interval
     skew: float
 
 
 @dataclass
 class SequenceSample:
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor, spans: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor, spans: Tensor)
+    label: (labels: Tensor, lengths: Tensor, spans: Tensor)
+    skew: float
+    """
+
     sound: tuple[Tensor, int, Tensor, Tensor]
     source: tuple[Tensor, int, Tensor, Tensor]
     label: tuple[Tensor, Tensor, Tensor]
-    # interval: Interval
     skew: float
 
 
 @dataclass
 class SoundBatch:
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor)
+    skew: Tensor
+    """
+
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     skew: Tensor
@@ -75,6 +112,13 @@ class SoundBatch:
 
 @dataclass
 class AnnotatedTokenizedBatch:
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor)
+    label: Tensor
+    skew: Tensor
+    """
+
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     label: Tensor
@@ -83,6 +127,13 @@ class AnnotatedTokenizedBatch:
 
 @dataclass
 class AnnotatedBatch:
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor)
+    label: (labels: Tensor, lengths: Tensor)
+    skew: Tensor
+    """
+
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     label: tuple[Tensor, Tensor]
@@ -91,6 +142,13 @@ class AnnotatedBatch:
 
 @dataclass
 class SequenceBatch:
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor, spans: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor, spans: Tensor)
+    label: (labels: Tensor, lengths: Tensor, spans: Tensor)
+    skew: float
+    """
+
     sound: tuple[Tensor, int, Tensor, Tensor]
     source: tuple[Tensor, int, Tensor, Tensor]
     label: tuple[Tensor, Tensor, Tensor]
@@ -1960,6 +2018,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
 #
 #         return xs, ys, ps, ss, ws
 #
+
 
 def _pad_axis(array: Tensor, pre: int = 0, post: int = 0, axis: int = 0) -> Tensor:
     pre, post = max(pre, 0), max(post, 0)
