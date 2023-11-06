@@ -1,4 +1,5 @@
 import math
+from typing import Callable
 
 import numpy as np
 from torch import Tensor
@@ -180,6 +181,8 @@ def apply_noise_modifier(
     return audio, sr
 
 
-def apply_fixed_tempo(audio: Tensor, sr: int, factor: float) -> tuple[Tensor, int]:
+def apply_fixed_tempo(
+    audio: Tensor, sr: int, _: dict, factor: float
+) -> tuple[Tensor, int]:
     tfm = [["tempo", "-s", str(factor)], ["rate", str(sr)]]
     return apply_sox_effects(audio, sr, tfm)
