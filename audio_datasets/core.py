@@ -14,11 +14,23 @@ from torchaudio import load as load_audio
 from torchaudio.sox_effects import apply_effects_tensor as apply_sox_effects
 from tqdm import tqdm
 
-from .augments import (CONFIG_MOD_HI, CONFIG_MOD_LO, CONFIG_MOD_MID,
-                       apply_channel_modifier, apply_noise_modifier,
-                       apply_room_modifier, apply_speech_modifier)
-from .lexicon import (is_postfix, is_prefix, is_stressed, is_subtoken,
-                      normalize_token, syllabize)
+from .augments import (
+    CONFIG_MOD_HI,
+    CONFIG_MOD_LO,
+    CONFIG_MOD_MID,
+    apply_channel_modifier,
+    apply_noise_modifier,
+    apply_room_modifier,
+    apply_speech_modifier,
+)
+from .lexicon import (
+    is_postfix,
+    is_prefix,
+    is_stressed,
+    is_subtoken,
+    normalize_token,
+    syllabize,
+)
 from .limits import Limits
 
 torchaudio.set_audio_backend("sox_io")
@@ -757,7 +769,6 @@ class TokenizedDataset(AnnotatedDataset):
                 else:
                     pre_t, post_t = math.floor(diff / 2), math.ceil(diff / 2)
                 sounds[i] = _pad_axis(x, pre_t, post_t, axis=0)
-                sounds_lens[i] = len(x) - post_t
 
         for i, x in enumerate(sources):
             if self.scale or len(x) > sound_fix_t:
@@ -781,7 +792,6 @@ class TokenizedDataset(AnnotatedDataset):
                 else:
                     pre_t, post_t = math.floor(diff / 2), math.ceil(diff / 2)
                 sources[i] = _pad_axis(x, pre_t, post_t, axis=0)
-                sources_lens[i] = len(x) - post_t
 
         sounds = torch.stack(sounds, dim=self.batch_dim).float()
         sounds_lens = torch.tensor(sounds_lens, dtype=torch.int)

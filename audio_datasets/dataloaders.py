@@ -213,6 +213,7 @@ class LibriSpeechTokenDataloader(LibriSpeechDataloader):
     def __init__(self, dataset_type=TokenizedDataset, **kwargs):
         super().__init__(dataset_type=dataset_type, **kwargs)
         self.data_config = {**self.data_config}
+        del self.dataloader_config["flat_labels"]
 
 
 def librispeech(
