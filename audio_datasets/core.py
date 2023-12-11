@@ -9,6 +9,7 @@ import scipy as sp
 import textgrids
 import torch
 import torchaudio
+from scipy.interpolate import RectBivariateSpline
 from torch import Tensor
 from torchaudio import load as load_audio
 from torchaudio.sox_effects import apply_effects_tensor as apply_sox_effects
@@ -743,6 +744,8 @@ class TokenizedDataset(AnnotatedDataset):
             ]
             sounds = [sounds[i] for i in will_fit]
             sounds_lens = [sounds_lens[i] for i in will_fit]
+            sources = [sources[i] for i in will_fit]
+            sources_lens = [sources_lens[i] for i in will_fit]
             label = label[will_fit]
         if len(sounds) == 0:
             return None
@@ -756,8 +759,8 @@ class TokenizedDataset(AnnotatedDataset):
                 else:
                     t0 = np.linspace(1, len(x), len(x))
                     t1 = np.linspace(1, len(x), sound_fix_t)
-                    sounds[i] = sp.interpolate.RectBivariateSpline(t0, freqs, x)(
-                        t1, freqs
+                    sounds[i] = torch.from_numpy(
+                        RectBivariateSpline(t0, freqs, x)(t1, freqs)
                     )
                     sounds_lens[i] = sound_fix_t
             else:
@@ -771,7 +774,7 @@ class TokenizedDataset(AnnotatedDataset):
                 sounds[i] = _pad_axis(x, pre_t, post_t, axis=0)
 
         for i, x in enumerate(sources):
-            if self.scale or len(x) > sound_fix_t:
+            if self.scale or len(x) > source_fix_t:
                 if waveform or self.audio_transform is None:
                     # TODO
                     # x[i] = librosa.effects.time_stretch(xi, xi.shape[0]/fix_t)[:fix_t]
@@ -779,8 +782,8 @@ class TokenizedDataset(AnnotatedDataset):
                 else:
                     t0 = np.linspace(1, len(x), len(x))
                     t1 = np.linspace(1, len(x), source_fix_t)
-                    sources[i] = sp.interpolate.RectBivariateSpline(t0, freqs, x)(
-                        t1, freqs
+                    sources[i] = torch.from_numpy(
+                        RectBivariateSpline(t0, freqs, x)(t1, freqs)
                     )
                     sources_lens[i] = source_fix_t
             else:
@@ -800,9 +803,12 @@ class TokenizedDataset(AnnotatedDataset):
 
         # TODO I don't remember what this was supposed to do
         if self.drop_modifiers:
-            sounds = sounds[sounds_lens != 0]
-            label = label[sounds_lens != 0]
-            sounds_lens = sounds_lens[sounds_lens != 0]
+            keep_mask = sounds_lens != 0
+            sounds = sounds[keep_mask]
+            sounds_lens = sounds_lens[keep_mask]
+            sources = sources[keep_mask]
+            sources_lens = sources_lens[keep_mask]
+            label = label[keep_mask]
 
         # TODO clean sources not handled
         return AnnotatedTokenizedSample(
@@ -1443,8 +1449,8 @@ class SymmetricTokenDataset(AnnotatedDataset):
                     # x[i] = librosa.effects.time_stretch(xi, context/target_t)
                     raise NotImplementedError()
                 else:
-                    sounds[i] = sp.interpolate.RectBivariateSpline(t0, freqs, xi)(
-                        t1, freqs
+                    sounds[i] = torch.from_numpy(
+                        RectBivariateSpline(t0, freqs, xi)(t1, freqs)
                     )
 
         sources = [source[start:stop] for start, stop in source_interval]
@@ -1460,8 +1466,8 @@ class SymmetricTokenDataset(AnnotatedDataset):
                     # x[i] = librosa.effects.time_stretch(xi, context/target_t)
                     raise NotImplementedError()
                 else:
-                    sources[i] = sp.interpolate.RectBivariateSpline(t0, freqs, xi)(
-                        t1, freqs
+                    sources[i] = torch.from_numpy(
+                        RectBivariateSpline(t0, freqs, xi)(t1, freqs)
                     )
 
         sounds_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
