@@ -1,7 +1,7 @@
 from typing import Callable, Optional
 
 from .core import AnnotatedDataset, SequenceDataset, TokenizedDataset
-from .data import LibriSpeech, NonSpeech
+from .data import LibriSpeech
 from .lexicon import LABELS
 from .limits import LIMITS_WORD, Limits
 from .transforms import mel_spectrogram
@@ -95,7 +95,6 @@ class LibriSpeechDataloader:
 class LibriSpeechSequenceDataloader(LibriSpeechDataloader):
     def __init__(
         self,
-        dataset_type=SequenceDataset,
         seq_size: int = 20,
         seq_min: int = 1,
         seq_time: float = 8.0,
@@ -104,7 +103,7 @@ class LibriSpeechSequenceDataloader(LibriSpeechDataloader):
         check_boundaries: bool = True,
         **kwargs,
     ):
-        super().__init__(dataset_type=dataset_type, **kwargs)
+        super().__init__(dataset_type=SequenceDataset, **kwargs)
         self.seq_per_sample = seq_per_sample
 
         self.data_config = {
@@ -125,8 +124,24 @@ class LibriSpeechSequenceDataloader(LibriSpeechDataloader):
 
 
 class LibriSpeechTokenDataloader(LibriSpeechDataloader):
-    def __init__(self, dataset_type=TokenizedDataset, **kwargs):
-        super().__init__(dataset_type=dataset_type, **kwargs)
+    def __init__(
+        self,
+        duration: float = 1,
+        scale: bool = False,
+        context: tuple[int, int] = (0, 0),
+        alignment: str = "left",
+        **kwargs,
+    ):
+        super().__init__(dataset_type=TokenizedDataset, **kwargs)
+
+        self.data_config = {
+            **self.data_config,
+            "duration": duration,
+            "scale": scale,
+            "context": context,
+            "alignment": alignment,
+        }
+
         del self.dataloader_config["flat_labels"]
 
 
