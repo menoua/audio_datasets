@@ -96,6 +96,21 @@ class AnnotatedTokenizedSample:
 
 
 @dataclass
+class MultiAnnotatedSample:
+    """
+    sound: (audio: Tensor, sr: int, intervals: dict[str, Interval])
+    source: (audio: Tensor, sr: int, intervals: dict[str, Interval])
+    label: dict[str, Tensor]
+    skew: float
+    """
+
+    sound: tuple[Tensor, int, dict[str, Interval]]
+    source: tuple[Tensor, int, dict[str, Interval]]
+    label: dict[str, Tensor]
+    skew: float
+
+
+@dataclass
 class SequenceSample:
     """
     sound: (audio: Tensor, sr: int, lengths: Tensor, spans: Tensor)
@@ -150,6 +165,21 @@ class AnnotatedBatch:
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     label: tuple[Tensor, Tensor]
+    skew: Tensor
+
+
+@dataclass
+class MultiAnnotatedBatch:
+    """
+    sound: (audio: Tensor, sr: int, lengths: Tensor)
+    source: (audio: Tensor, sr: int, lengths: Tensor)
+    label: dict[str, (labels: Tensor, lengths: Tensor)]
+    skew: Tensor
+    """
+
+    sound: tuple[Tensor, int, Tensor]
+    source: tuple[Tensor, int, Tensor]
+    label: dict[str, tuple[Tensor, Tensor]]
     skew: Tensor
 
 
@@ -315,6 +345,10 @@ class SoundDataset(torch.utils.data.Dataset):
         self.mod_final = mod_final
         self.mod_intensity = mod_intensity
 
+    def limit(self, limits: Optional[Limits]):
+        self.limits = limits
+        return self
+
     def iterator(
         self,
         batch_size: int = 1,
@@ -422,9 +456,9 @@ class AnnotatedDataset(SoundDataset):
         if limits:
             sound = sound[: int(limits.time * sound_sr)]
             source = source[: int(limits.time / skew * source_sr)]
-            y = y[: limits.tokens]
-            sound_intervals = sound_intervals[: limits.tokens]
-            source_intervals = source_intervals[: limits.tokens]
+            y = y[: limits.tokens(self.target)]
+            sound_intervals = sound_intervals[: limits.tokens(self.target)]
+            source_intervals = source_intervals[: limits.tokens(self.target)]
 
         return AnnotatedSample(
             sound=(sound, sound_sr, sound_intervals),
@@ -437,17 +471,13 @@ class AnnotatedDataset(SoundDataset):
     def num_classes(self):
         return len(self.vocabulary)
 
-    def limit(self, limits: Optional[Limits]):
-        self.limits = limits
-        return self
-
     def iterator(
         self,
-        batch_size=1,
-        shuffle=False,
-        num_workers=0,
-        full_tensor=True,
-        flat_labels=False,
+        batch_size: int = 1,
+        shuffle: bool = False,
+        num_workers: int = 0,
+        full_tensor: bool = True,
+        flat_labels: bool = False,
     ):
         if full_tensor and self.limits is None:
             raise RuntimeError("Argument full_tensor cannot be set without limits")
@@ -469,7 +499,7 @@ class AnnotatedDataset(SoundDataset):
             if full_tensor and self.limits is not None:
                 max_sound_len = int(self.limits.time * sound_sr)
                 max_source_len = int(self.limits.time * source_sr)
-                max_label_len = int(self.limits.tokens)
+                max_label_len = int(self.limits.tokens(self.target))
             else:
                 max_sound_len = int(sound_lens.max())
                 max_source_len = int(source_lens.max())
@@ -507,85 +537,6 @@ class AnnotatedDataset(SoundDataset):
             collate_fn=collate_fn,
         )
 
-    def _spaced_textgrid(self, textgrid):
-        it_phone = iter(textgrid["phones"])
-        phone = next(it_phone)
-
-        phones = []
-        for word in textgrid["words"]:
-            if word.text in ["", "sp", "spn", "sil", "<unk>"]:
-                continue
-
-            try:
-                while phone.xmin < word.xmin - 1e-3:
-                    phone = next(it_phone)
-            except StopIteration:
-                break
-
-            if phone.xmin >= word.xmax + 1e-3:
-                continue
-
-            while phone.xmin < word.xmax - 1e-3:
-                phones.append(phone)
-                phone = next(it_phone)
-
-            if self.spaced and len(phones) > 0:
-                phones.append(textgrids.Interval(" ", phones[-1].xmax, phones[-1].xmax))
-
-        return textgrids.Tier(phones)
-
-    def _syllabized_textgrid(self, textgrid):
-        it_phone = iter(textgrid["phones"])
-        phone = next(it_phone)
-
-        syllables = []
-        for word in textgrid["words"]:
-            if word.text in ["", "sp", "spn", "sil", "<unk>"]:
-                continue
-
-            try:
-                while phone.xmin < word.xmin - 1e-3:
-                    phone = next(it_phone)
-            except StopIteration:
-                break
-
-            if phone.xmin >= word.xmax + 1e-3:
-                continue
-
-            phones = []
-            while phone.xmin < word.xmax - 1e-3:
-                phones.append(phone)
-                phone = next(it_phone)
-
-            syllbs = syllabize([p.text for p in phones], stressed=True)
-            for syll in syllbs:
-                nsyll = len(syll.split("-"))
-                syllables.append(
-                    textgrids.Interval(syll, phones[0].xmin, phones[nsyll - 1].xmax)
-                )
-                phones = phones[nsyll:]
-
-            if self.spaced and len(syllbs) > 0:
-                syllables.append(
-                    textgrids.Interval(" ", syllables[-1].xmax, syllables[-1].xmax)
-                )
-
-        return textgrids.Tier(syllables)
-
-    def _character_textgrid(self, textgrid):
-        characters = []
-        for word in textgrid["words"]:
-            if word.text in ["", "sp", "spn", "sil", "<unk>"]:
-                continue
-
-            for char in word.text:
-                characters.append(textgrids.Interval(char, word.xmin, word.xmax))
-
-            if self.spaced:
-                characters.append(textgrids.Interval(" ", word.xmax, word.xmax))
-
-        return textgrids.Tier(characters)
-
     def _annotation(
         self,
         annotation: str,
@@ -597,11 +548,11 @@ class AnnotatedDataset(SoundDataset):
             # read annotation file
             textgrid = textgrids.TextGrid(filepath)
             if self.target == "phones":
-                textgrid = self._spaced_textgrid(textgrid)
+                textgrid = _spaced_textgrid(textgrid, self.spaced)
             elif self.target == "syllables":
-                textgrid = self._syllabized_textgrid(textgrid)
+                textgrid = _syllabized_textgrid(textgrid, self.spaced)
             elif self.target == "chars":
-                textgrid = self._character_textgrid(textgrid)
+                textgrid = _character_textgrid(textgrid, self.spaced)
             else:
                 textgrid = textgrid[self.target]
             # drop silence tokens
@@ -665,7 +616,7 @@ class AnnotatedDataset(SoundDataset):
             max_time = [end for _, end in intervals if end <= self.limits.time][-1]
         else:
             max_time = self.limits.time
-        max_tokens = self.limits.tokens
+        max_tokens = self.limits.tokens(self.target)
 
         if len(intervals) > max_tokens:
             time_limit_equiv = intervals[max_tokens][0]
@@ -676,7 +627,7 @@ class AnnotatedDataset(SoundDataset):
         max_time = min(max_time, time_limit_equiv)
         max_tokens = min(max_tokens, token_limit_equiv)
 
-        return Limits(time=max_time, tokens=max_tokens)
+        return Limits(time=max_time, **{self.target: max_tokens})
 
 
 class TokenizedDataset(AnnotatedDataset):
@@ -1585,179 +1536,321 @@ class SymmetricTokenDataset(AnnotatedDataset):
         return xs, ys
 
 
-# class MultiAnnotatedDataset(SoundDataset):
-#     def __init__(
-#         self,
-#         sounds,
-#         annotations,
-#         vocabulary,
-#         *,
-#         normalize=False,
-#         ignore_silence=True,
-#         **kwargs,
-#     ):
-#         super().__init__(sounds, **kwargs)
-#         self.annotations = annotations
-#         self.vocabulary = vocabulary
-#         self.stressed = {
-#             k in ("phones", "syllables") and any(is_stressed(w) for w in v)
-#             for k, v in vocabulary.items()
-#         }
-#         self.normalize = normalize
-#         self.spaced = {k: (" " in v) for k, v in vocabulary.items()}
-#         self.include_na = {k: ("[UNK]" in v) for k, v in vocabulary.items()}
-#         self.ignore_silence = ignore_silence
-#         self.targets = sorted(vocabulary.keys())
-#         self.key = {
-#             k: {tok: i for i, tok in enumerate(v)} for k, v in vocabulary.items()
-#         }
-#
-#     @torch.no_grad()
-#     def __getitem__(self, idx: int, waveform: bool = False):
-#         sample = super().__getitem__(idx, waveform=waveform)
-#
-#         p = self._annotation(self.annotations[idx], "phones", skew=sample.skew)
-#         s = self._annotation(self.annotations[idx], "syllables", skew=sample.skew)
-#         w = self._annotation(self.annotations[idx], "words", skew=sample.skew)
-#
-#         return sample.sound, p, s, w
-#
-#     def _spaced_textgrid(self, textgrid):
-#         it_phone = iter(textgrid["phones"])
-#         phone = next(it_phone)
-#
-#         phones = []
-#         for word in textgrid["words"]:
-#             if word.text in ["", "sp", "spn", "sil", "<unk>"]:
-#                 continue
-#
-#             try:
-#                 while phone.xmin < word.xmin - 1e-3:
-#                     phone = next(it_phone)
-#             except StopIteration:
-#                 break
-#
-#             if phone.xmin >= word.xmax + 1e-3:
-#                 continue
-#
-#             while phone.xmin < word.xmax - 1e-3:
-#                 phones.append(phone)
-#                 phone = next(it_phone)
-#
-#             if self.spaced["phones"] and len(phones) > 0:
-#                 phones.append(textgrids.Interval(" ", phones[-1].xmax, phones[-1].xmax))
-#
-#         return textgrids.Tier(phones)
-#
-#     def _syllabized_textgrid(self, textgrid):
-#         it_phone = iter(textgrid["phones"])
-#         phone = next(it_phone)
-#
-#         syllables = []
-#         for word in textgrid["words"]:
-#             if word.text in ["", "sp", "spn", "sil", "<unk>"]:
-#                 continue
-#
-#             try:
-#                 while phone.xmin < word.xmin - 1e-3:
-#                     phone = next(it_phone)
-#             except StopIteration:
-#                 break
-#
-#             if phone.xmin >= word.xmax + 1e-3:
-#                 continue
-#
-#             phones = []
-#             while phone.xmin < word.xmax - 1e-3:
-#                 phones.append(phone)
-#                 phone = next(it_phone)
-#
-#             syllbs = syllabize([p.text for p in phones], stressed=True)
-#             for syll in syllbs:
-#                 nsyll = len(syll.split("-"))
-#                 syllables.append(
-#                     textgrids.Interval(syll, phones[0].xmin, phones[nsyll - 1].xmax)
-#                 )
-#                 phones = phones[nsyll:]
-#
-#             if self.spaced["syllables"] and len(syllbs) > 0:
-#                 syllables.append(
-#                     textgrids.Interval(" ", syllables[-1].xmax, syllables[-1].xmax)
-#                 )
-#
-#         return textgrids.Tier(syllables)
-#
-#     def _annotation(
-#         self, annotation, target_type, ignore_silence=True, skew=None
-#     ) -> tuple[Tensor, list[tuple[float, float]]]:
-#         fmt, filepath = annotation.split(":")
-#
-#         if fmt == "libri":
-#             # read annotation file
-#             textgrid = textgrids.TextGrid(filepath)
-#             if target_type == "phones":
-#                 textgrid = self._spaced_textgrid(textgrid)
-#             elif target_type == "syllables":
-#                 textgrid = self._syllabized_textgrid(textgrid)
-#             else:
-#                 textgrid = textgrid[target_type]
-#             # drop silence tokens
-#             textgrid = (
-#                 [item for item in textgrid if item.text not in ["", "sp", "spn", "sil"]]
-#                 if ignore_silence
-#                 else textgrid
-#             )
-#             # transform to standard labels
-#             for item in textgrid:
-#                 item.text = item.text.upper()
-#
-#             target = [item.text for item in textgrid]
-#             interv = [(item.xmin, item.xmax) for item in textgrid]
-#         elif fmt == "swc":
-#             raise NotImplementedError(
-#                 "Spoken Wikipedia annotation not yet implemented!"
-#             )
-#         elif fmt == "tedlium":
-#             raise NotImplementedError("TED-LIUM r3 annotation not yet implemented!")
-#         else:
-#             raise RuntimeError("Unknown annotation format:", fmt)
-#
-#         if target_type in ["phones", "syllables"] and not self.stressed:
-#             target = [re.sub(r"([A-Z]+)[0-9]", r"\g<1>", token) for token in target]
-#
-#         if target_type == "words" and self.normalize:
-#             expanded_target, expanded_interv = [], []
-#             for token, intv in zip(target, interv):
-#                 subtokens = normalize_token(token)  # , self.vocabulary)
-#                 expanded_target += subtokens
-#                 expanded_interv += [
-#                     intv
-#                     if not is_subtoken(t)
-#                     else (intv[:1] * 2 if is_prefix(t) else intv[1:] * 2)
-#                     for t in subtokens
-#                 ]
-#             target, interv = expanded_target, expanded_interv
-#
-#         if self.key[target_type]:
-#             encoded_target, encoded_interv = [], []
-#             for token, intv in zip(target, interv):
-#                 if token in self.key[target_type]:
-#                     pass
-#                 elif self.include_na[target_type]:
-#                     token = "[UNK]"
-#                 else:
-#                     continue
-#
-#                 encoded_target.append(self.key[target_type][token])
-#                 encoded_interv.append(intv)
-#             target, interv = encoded_target, encoded_interv
-#
-#         if skew is not None:
-#             interv = [(start * skew, stop * skew) for start, stop in interv]
-#
-#         return torch.tensor(target), interv
-#
-#
+class MultiAnnotatedDataset(SoundDataset):
+    def __init__(
+        self,
+        sounds: list[str],
+        annotations: list[str],
+        vocabulary: dict[str, list[str]],
+        *,
+        normalize: bool = False,
+        ignore_silence: bool = True,
+        **kwargs,
+    ):
+        super().__init__(sounds, **kwargs)
+        self.annotations = annotations
+        self.vocabulary = vocabulary
+        self.stressed = {
+            k: k in ("phones", "syllables") and any(is_stressed(w) for w in v)
+            for k, v in vocabulary.items()
+        }
+        self.normalize = normalize
+        self.spaced = {k: " " in v for k, v in vocabulary.items()}
+        self.include_na = {k: "[UNK]" in v for k, v in vocabulary.items()}
+        self.ignore_silence = ignore_silence
+        self.targets = sorted(vocabulary.keys())
+        self.key = {
+            k: {tok: i for i, tok in enumerate(v)} for k, v in vocabulary.items()
+        }
+
+    @torch.no_grad()
+    def __getitem__(
+        self, idx: int, waveform: bool = False
+    ) -> Optional[MultiAnnotatedSample]:
+        sample = super().__getitem__(idx, waveform=waveform)
+        sound, sound_sr = sample.sound
+        source, source_sr = sample.source
+        skew = sample.skew
+
+        labels = {}
+        sound_intervals = {}
+        source_intervals = {}
+        for k in self.targets:
+            labels[k], source_intervals[k] = self._annotation(self.annotations[idx], k)
+            sound_intervals[k] = [
+                (start * skew, stop * skew) for start, stop in source_intervals[k]
+            ]
+            if len(labels[k]) == 0:
+                return None
+
+        if self.limits:
+            if skew >= 1:
+                limits = self._get_limits(sound_intervals)
+            else:
+                limits = self._get_limits(source_intervals)
+                limits.time *= skew
+
+            sound = sound[: int(limits.time * sound_sr)]
+            source = source[: int(limits.time / skew * source_sr)]
+            labels = {k: labels[k][: limits.tokens(k)] for k in self.targets}
+            sound_intervals = {
+                k: sound_intervals[k][: limits.tokens(k)] for k in self.targets
+            }
+            source_intervals = {
+                k: source_intervals[k][: limits.tokens(k)] for k in self.targets
+            }
+
+        return MultiAnnotatedSample(
+            sound=(sound, sound_sr, sound_intervals),
+            source=(source, source_sr, source_intervals),
+            label=labels,
+            skew=sample.skew,
+        )
+
+    @property
+    def num_classes(self):
+        return {k: len(v) for k, v in self.vocabulary.items()}
+
+    def iterator(
+        self,
+        batch_size: int = 1,
+        shuffle: bool = False,
+        num_workers: int = 0,
+        full_tensor: bool = True,
+        flat_labels: bool = False,
+    ):
+        if full_tensor and self.limits is None:
+            raise RuntimeError("Argument full_tensor cannot be set without limits")
+
+        def collate_fn(
+            samples: list[MultiAnnotatedSample],
+        ) -> Optional[MultiAnnotatedBatch]:
+            if not samples or any(s is None for s in samples):
+                return None
+
+            sounds = [s.sound[0] for s in samples]
+            sources = [s.source[0] for s in samples]
+            labels = {k: [s.label[k] for s in samples] for k in self.targets}
+            _, sound_sr, _ = samples[0].sound
+            _, source_sr, _ = samples[0].source
+
+            sound_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
+            source_lens = torch.tensor([len(x) for x in sources], dtype=torch.int)
+            label_lens = {
+                k: torch.tensor([len(y) for y in labels[k]], dtype=torch.int)
+                for k in self.targets
+            }
+
+            if full_tensor and self.limits is not None:
+                max_sound_len = int(self.limits.time * sound_sr)
+                max_source_len = int(self.limits.time * source_sr)
+                max_label_len = {k: int(self.limits.tokens(k)) for k in self.targets}
+            else:
+                max_sound_len = int(sound_lens.max())
+                max_source_len = int(source_lens.max())
+                max_label_len = {k: int(label_lens[k].max()) for k in self.targets}
+
+            sounds = [_pad_axis(x, 0, max_sound_len - len(x), axis=0) for x in sounds]
+            sources = [
+                _pad_axis(x, 0, max_source_len - len(x), axis=0) for x in sources
+            ]
+            if not flat_labels:
+                for k in self.targets:
+                    labels[k] = [
+                        _pad_axis(y, 0, max_label_len[k] - len(y), axis=0)
+                        for y in labels[k]
+                    ]
+
+            sounds = torch.stack(sounds, dim=self.batch_dim)
+            sources = torch.stack(sources, dim=self.batch_dim)
+            if flat_labels:
+                labels = {k: torch.cat(labels[k]) for k in self.targets}
+            else:
+                labels = {
+                    k: torch.stack(labels[k], dim=self.batch_dim) for k in self.targets
+                }
+            skew = torch.tensor([s.skew for s in samples])
+
+            return MultiAnnotatedBatch(
+                sound=(sounds, sound_sr, sound_lens),
+                source=(sources, source_sr, source_lens),
+                label={k: (labels[k], label_lens[k]) for k in self.targets},
+                skew=skew,
+            )
+
+        return torch.utils.data.DataLoader(
+            self,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            collate_fn=collate_fn,
+        )
+
+    def _spaced_textgrid(self, textgrid):
+        it_phone = iter(textgrid["phones"])
+        phone = next(it_phone)
+
+        phones = []
+        for word in textgrid["words"]:
+            if word.text in ["", "sp", "spn", "sil", "<unk>"]:
+                continue
+
+            try:
+                while phone.xmin < word.xmin - 1e-3:
+                    phone = next(it_phone)
+            except StopIteration:
+                break
+
+            if phone.xmin >= word.xmax + 1e-3:
+                continue
+
+            while phone.xmin < word.xmax - 1e-3:
+                phones.append(phone)
+                phone = next(it_phone)
+
+            if self.spaced["phones"] and len(phones) > 0:
+                phones.append(textgrids.Interval(" ", phones[-1].xmax, phones[-1].xmax))
+
+        return textgrids.Tier(phones)
+
+    def _syllabized_textgrid(self, textgrid):
+        it_phone = iter(textgrid["phones"])
+        phone = next(it_phone)
+
+        syllables = []
+        for word in textgrid["words"]:
+            if word.text in ["", "sp", "spn", "sil", "<unk>"]:
+                continue
+
+            try:
+                while phone.xmin < word.xmin - 1e-3:
+                    phone = next(it_phone)
+            except StopIteration:
+                break
+
+            if phone.xmin >= word.xmax + 1e-3:
+                continue
+
+            phones = []
+            while phone.xmin < word.xmax - 1e-3:
+                phones.append(phone)
+                phone = next(it_phone)
+
+            syllbs = syllabize([p.text for p in phones], stressed=True)
+            for syll in syllbs:
+                nsyll = len(syll.split("-"))
+                syllables.append(
+                    textgrids.Interval(syll, phones[0].xmin, phones[nsyll - 1].xmax)
+                )
+                phones = phones[nsyll:]
+
+            if self.spaced["syllables"] and len(syllbs) > 0:
+                syllables.append(
+                    textgrids.Interval(" ", syllables[-1].xmax, syllables[-1].xmax)
+                )
+
+        return textgrids.Tier(syllables)
+
+    def _annotation(
+        self,
+        annotation: str,
+        target_type: str,
+        ignore_silence: bool = True,
+        # skew: Optional[float] = None,
+    ) -> tuple[Tensor, list[tuple[float, float]]]:
+        fmt, filepath = annotation.split(":")
+
+        if fmt == "libri":
+            # read annotation file
+            textgrid = textgrids.TextGrid(filepath)
+            if target_type == "phones":
+                textgrid = _spaced_textgrid(textgrid, self.spaced["phones"])
+            elif target_type == "syllables":
+                textgrid = _syllabized_textgrid(textgrid, self.spaced["syllables"])
+            elif target_type == "chars":
+                textgrid = _character_textgrid(textgrid, self.spaced["chars"])
+            else:
+                textgrid = textgrid[target_type]
+            # drop silence tokens
+            textgrid = (
+                [item for item in textgrid if item.text not in ["", "sp", "spn", "sil"]]
+                if ignore_silence
+                else textgrid
+            )
+            # transform to standard labels
+            for item in textgrid:
+                item.text = item.text.upper()
+
+            target = [item.text for item in textgrid]
+            interv = [(item.xmin, item.xmax) for item in textgrid]
+        elif fmt == "swc":
+            raise NotImplementedError(
+                "Spoken Wikipedia annotation not yet implemented!"
+            )
+        elif fmt == "tedlium":
+            raise NotImplementedError("TED-LIUM r3 annotation not yet implemented!")
+        else:
+            raise RuntimeError("Unknown annotation format:", fmt)
+
+        if target_type in ["phones", "syllables"] and not self.stressed:
+            target = [re.sub(r"([A-Z]+)[0-9]", r"\g<1>", token) for token in target]
+
+        if target_type == "words" and self.normalize:
+            expanded_target, expanded_interv = [], []
+            for token, intv in zip(target, interv):
+                subtokens = normalize_token(token)  # , self.vocabulary)
+                expanded_target += subtokens
+                expanded_interv += [
+                    intv
+                    if not is_subtoken(t)
+                    else (intv[:1] * 2 if is_prefix(t) else intv[1:] * 2)
+                    for t in subtokens
+                ]
+            target, interv = expanded_target, expanded_interv
+
+        if self.key[target_type]:
+            encoded_target, encoded_interv = [], []
+            for token, intv in zip(target, interv):
+                if token in self.key[target_type]:
+                    pass
+                elif self.include_na[target_type]:
+                    token = "[UNK]"
+                else:
+                    continue
+
+                encoded_target.append(self.key[target_type][token])
+                encoded_interv.append(intv)
+            target, interv = encoded_target, encoded_interv
+
+        # if skew is not None:
+        #     interv = [(start * skew, stop * skew) for start, stop in interv]
+
+        return torch.tensor(target), interv
+
+    def _get_limits(self, intervals: dict[str, list[tuple[float, float]]]) -> Limits:
+        if self.limits is None:
+            raise ValueError("__get_limits requires self.limit to be set")
+
+        max_time = self.limits.time
+        for k in self.targets:
+            if max_time < intervals[k][-1][1]:
+                max_time = [end for _, end in intervals[k] if end <= max_time][-1]
+
+        max_tokens = {}
+        for k in self.targets:
+            max_tokens[k] = self.limits.tokens(k)
+
+            if len(intervals[k]) > max_tokens[k]:
+                time_limit_equiv = intervals[k][max_tokens[k]][0]
+                max_time = min(max_time, time_limit_equiv)
+
+        for k in self.targets:
+            token_limit_equiv = len([1 for _, end in intervals[k] if end <= max_time])
+            max_tokens[k] = min(max_tokens[k], token_limit_equiv)
+
+        return Limits(time=max_time, **max_tokens)
+
+
 # class MultiSymmetricTokenDataset(MultiAnnotatedDataset):
 #     def __init__(
 #         self,
@@ -2047,3 +2140,85 @@ def _pad_axis(array: Tensor, pre: int = 0, post: int = 0, axis: int = 0) -> Tens
     npad = [n for a, b in npad[::-1] for n in (a, b)]
 
     return torch.nn.functional.pad(array, npad)
+
+
+def _spaced_textgrid(textgrid, spaced):
+    it_phone = iter(textgrid["phones"])
+    phone = next(it_phone)
+
+    phones = []
+    for word in textgrid["words"]:
+        if word.text in ["", "sp", "spn", "sil", "<unk>"]:
+            continue
+
+        try:
+            while phone.xmin < word.xmin - 1e-3:
+                phone = next(it_phone)
+        except StopIteration:
+            break
+
+        if phone.xmin >= word.xmax + 1e-3:
+            continue
+
+        while phone.xmin < word.xmax - 1e-3:
+            phones.append(phone)
+            phone = next(it_phone)
+
+        if spaced and len(phones) > 0:
+            phones.append(textgrids.Interval(" ", phones[-1].xmax, phones[-1].xmax))
+
+    return textgrids.Tier(phones)
+
+
+def _syllabized_textgrid(textgrid, spaced):
+    it_phone = iter(textgrid["phones"])
+    phone = next(it_phone)
+
+    syllables = []
+    for word in textgrid["words"]:
+        if word.text in ["", "sp", "spn", "sil", "<unk>"]:
+            continue
+
+        try:
+            while phone.xmin < word.xmin - 1e-3:
+                phone = next(it_phone)
+        except StopIteration:
+            break
+
+        if phone.xmin >= word.xmax + 1e-3:
+            continue
+
+        phones = []
+        while phone.xmin < word.xmax - 1e-3:
+            phones.append(phone)
+            phone = next(it_phone)
+
+        syllbs = syllabize([p.text for p in phones], stressed=True)
+        for syll in syllbs:
+            nsyll = len(syll.split("-"))
+            syllables.append(
+                textgrids.Interval(syll, phones[0].xmin, phones[nsyll - 1].xmax)
+            )
+            phones = phones[nsyll:]
+
+        if spaced and len(syllbs) > 0:
+            syllables.append(
+                textgrids.Interval(" ", syllables[-1].xmax, syllables[-1].xmax)
+            )
+
+    return textgrids.Tier(syllables)
+
+
+def _character_textgrid(textgrid, spaced):
+    characters = []
+    for word in textgrid["words"]:
+        if word.text in ["", "sp", "spn", "sil", "<unk>"]:
+            continue
+
+        for char in word.text:
+            characters.append(textgrids.Interval(char, word.xmin, word.xmax))
+
+        if spaced:
+            characters.append(textgrids.Interval(" ", word.xmax, word.xmax))
+
+    return textgrids.Tier(characters)

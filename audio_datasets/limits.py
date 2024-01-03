@@ -4,48 +4,29 @@ from dataclasses import dataclass
 @dataclass
 class Limits:
     time: float
-    tokens: int
+    chars: int
+    phones: int
+    syllables: int
+    words: int
 
+    def tokens(self, targets):
+        return {
+            "chars": self.chars,
+            "phones": self.phones,
+            "syllables": self.syllables,
+            "words": self.words,
+        }[targets]
 
-LIMITS_CHAR = {
-    "librispeech": {
-        "max": Limits(time=30.0, tokens=530),  # 100th percentile
-        "great": Limits(time=22.0, tokens=380),  # 99.99th percentile
-        "good": Limits(time=18.0, tokens=330),  # 99.95th percentile
-        "ok": Limits(time=17.0, tokens=290),  # 99th percentile
-    }
-}
-
-LIMITS_PHONE = {
-    "librispeech": {
-        "max": Limits(time=30.0, tokens=400),
-        "great": Limits(time=22.0, tokens=260),
-        "good": Limits(time=18.0, tokens=220),
-        "ok": Limits(time=17.0, tokens=200),
-    }
-}
-
-LIMITS_SYLLABLE = {
-    "librispeech": {
-        "max": Limits(time=30.0, tokens=160),
-        "great": Limits(time=22.0, tokens=100),
-        "good": Limits(time=18.0, tokens=85),
-        "ok": Limits(time=17.0, tokens=75),
-    }
-}
-
-LIMITS_WORD = {
-    "librispeech": {
-        "max": Limits(time=30.0, tokens=90),
-        "great": Limits(time=22.0, tokens=75),
-        "good": Limits(time=18.0, tokens=65),
-        "ok": Limits(time=17.0, tokens=60),
-    }
-}
 
 LIMITS = {
-    "chars": LIMITS_CHAR,
-    "phones": LIMITS_PHONE,
-    "syllables": LIMITS_SYLLABLE,
-    "words": LIMITS_WORD,
+    "librispeech": {
+        # 100th percentile
+        "max": Limits(time=30.0, chars=530, phones=400, syllables=160, words=90),
+        # 99.99th percentile
+        "great": Limits(time=22.0, chars=380, phones=260, syllables=100, words=75),
+        # 99.95th percentile
+        "good": Limits(time=18.0, chars=330, phones=220, syllables=85, words=65),
+        # 99th percentile
+        "ok": Limits(time=17.0, chars=290, phones=200, syllables=75, words=60),
+    }
 }

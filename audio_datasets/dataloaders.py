@@ -1,9 +1,10 @@
 from typing import Callable, Optional
 
-from .core import AnnotatedDataset, SequenceDataset, TokenizedDataset
+from .core import (AnnotatedDataset, MultiAnnotatedDataset, SequenceDataset,
+                   TokenizedDataset)
 from .data import LibriSpeech
 from .lexicon import LABELS
-from .limits import LIMITS_WORD, Limits
+from .limits import LIMITS, Limits
 from .transforms import mel_spectrogram
 
 
@@ -13,7 +14,7 @@ class LibriSpeechDataloader:
         dataset_type=AnnotatedDataset,
         target: str = "words",
         labels: Optional[list[str]] = None,
-        limits: Optional[Limits] = LIMITS_WORD["librispeech"]["max"],
+        limits: Optional[Limits] = LIMITS["librispeech"]["max"],
         batch_size: int = 16,
         num_workers: int = 4,
         flat_labels: bool = False,
@@ -147,7 +148,24 @@ class LibriSpeechTokenDataloader(LibriSpeechDataloader):
         del self.dataloader_config["flat_labels"]
 
 
-#
+class LibriSpeechMultiDataloader(LibriSpeechDataloader):
+    def __init__(
+        self,
+        labels: Optional[dict[str, list[str]]] = None,
+        **kwargs,
+    ):
+        super().__init__(dataset_type=MultiAnnotatedDataset, **kwargs)
+
+        if labels is None:
+            labels = {k: LABELS[k] for k in ("chars", "phones", "syllables", "words")}
+
+        self.data_config = {
+            **self.data_config,
+            "vocabulary": labels,
+        }
+        del self.data_config["target"]
+
+
 # def librispeech(
 #     target: str = "words",
 #     vocabulary: Optional[list[str]] = None,
