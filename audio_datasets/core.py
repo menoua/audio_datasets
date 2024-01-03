@@ -375,7 +375,6 @@ class AnnotatedDataset(SoundDataset):
         vocabulary: list[str],
         target: str,
         *,
-        value_nil: int = 0,
         normalize: bool = False,
         ignore_silence: bool = True,
         **kwargs,
@@ -387,7 +386,6 @@ class AnnotatedDataset(SoundDataset):
         self.stressed = target in ("phones", "syllables") and any(
             is_stressed(w) for w in vocabulary
         )
-        self.value_nil = value_nil
         self.normalize = normalize
         self.spaced = " " in vocabulary
         self.include_na = "[UNK]" in vocabulary
@@ -1594,7 +1592,6 @@ class SymmetricTokenDataset(AnnotatedDataset):
 #         annotations,
 #         vocabulary,
 #         *,
-#         value_nil=0,
 #         normalize=False,
 #         ignore_silence=True,
 #         **kwargs,
@@ -1606,7 +1603,6 @@ class SymmetricTokenDataset(AnnotatedDataset):
 #             k in ("phones", "syllables") and any(is_stressed(w) for w in v)
 #             for k, v in vocabulary.items()
 #         }
-#         self.value_nil = value_nil
 #         self.normalize = normalize
 #         self.spaced = {k: (" " in v) for k, v in vocabulary.items()}
 #         self.include_na = {k: ("[UNK]" in v) for k, v in vocabulary.items()}
