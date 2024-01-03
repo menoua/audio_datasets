@@ -19,9 +19,10 @@ class LibriSpeechDataloader:
         flat_labels: bool = False,
         batch_first: bool = True,
         audio_transform: Optional[Callable] = mel_spectrogram(),
-        train_subset="train-*",
-        dev_subset="dev-other",
-        test_subset="test-clean",
+        train_subset: str = "train-*",
+        dev_subset: str = "dev-other",
+        test_subset: str = "test-clean",
+        **kwargs,
     ):
         if labels is None:
             labels = LABELS[target]
@@ -41,6 +42,7 @@ class LibriSpeechDataloader:
             "limits": limits,
             "audio_transform": audio_transform,
             "normalize": len([w for w in labels if "|" in w]) > 0,
+            **kwargs,
         }
 
         self.dataloader_config = {

@@ -174,6 +174,7 @@ class SoundDataset(torch.utils.data.Dataset):
         sounds: list[str],
         *,
         in_sr: int = 16_000,
+        out_sr: Optional[int] = None,
         audio_transform: Optional[Callable] = None,
         limits: Optional[Limits],
         mod_speech: bool = False,
@@ -187,6 +188,7 @@ class SoundDataset(torch.utils.data.Dataset):
     ):
         self.sounds: list[str] = sounds
         self.in_sr: int = in_sr
+        self.out_sr: Optional[int] = out_sr
         self.audio_transform: Optional[Callable] = audio_transform
         self.limits: Optional[Limits] = limits
         self.mod_speech: bool = mod_speech
@@ -268,7 +270,10 @@ class SoundDataset(torch.utils.data.Dataset):
         else:
             mix_x = self.audio_transform(mix_audio)
             in_x = self.audio_transform(in_audio)
-            out_sr = int(in_sr * mix_x.shape[0] / mix_audio.shape[1])
+            if self.out_sr:
+                out_sr = self.out_sr
+            else:
+                out_sr = round(in_sr * mix_x.shape[0] / mix_audio.shape[1])
 
         return SoundSample(
             sound=(mix_x, out_sr),
