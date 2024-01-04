@@ -817,7 +817,7 @@ class TokenizedDataset(AnnotatedDataset):
             sounds, sound_sr, sounds_lens = zip(*[s.sound for s in samples])
             sources, source_sr, sources_lens = zip(*[s.source for s in samples])
             labels = [s.label for s in samples]
-            names = [s.name for s in samples for _ in range(len(s.sound))]
+            names = [s.name for s in samples]
 
             sounds = torch.cat(sounds, dim=self.batch_dim)
             sources = torch.cat(sources, dim=self.batch_dim)
@@ -1039,7 +1039,7 @@ class BlockDataset(SoundDataset):
 
             sounds, sound_sr, sounds_lens = zip(*[s.sound for s in samples])
             sources, source_sr, sources_lens = zip(*[s.source for s in samples])
-            names = [s.name for s in samples for _ in range(len(s.sound))]
+            names = [s.name for s in samples]
 
             sounds = torch.cat(sounds, dim=self.batch_dim)
             sources = torch.cat(sources, dim=self.batch_dim)
@@ -1221,7 +1221,7 @@ class SequenceDataset(AnnotatedDataset):
                 *[s.source for s in samples]
             )
             labels, labels_lens, labels_span = zip(*[s.label for s in samples])
-            names = [s.name for s in samples for _ in range(len(s.sound))]
+            names = [s.name for s in samples]
 
             sounds = torch.cat(sounds, dim=self.batch_dim)
             sources = torch.cat(sources, dim=self.batch_dim)
@@ -1495,7 +1495,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
             sounds, sound_sr, sounds_lens = zip(*[s.sound for s in samples])
             sources, source_sr, sources_lens = zip(*[s.source for s in samples])
             labels = [s.label for s in samples]
-            names = [s.name for s in samples for _ in range(len(s.sound))]
+            names = [s.name for s in samples]
 
             sounds = torch.cat(sounds, dim=self.batch_dim)
             sources = torch.cat(sources, dim=self.batch_dim)
@@ -1674,7 +1674,7 @@ class MultiAnnotatedDataset(SoundDataset):
             labels = {k: [s.label[k] for s in samples] for k in self.targets}
             _, sound_sr, _ = samples[0].sound
             _, source_sr, _ = samples[0].source
-            names = [s.name for s in samples for _ in range(len(s.sound))]
+            names = [s.name for s in samples]
 
             sound_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
             source_lens = torch.tensor([len(x) for x in sources], dtype=torch.int)
