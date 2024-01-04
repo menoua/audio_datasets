@@ -1602,6 +1602,7 @@ class MultiAnnotatedDataset(SoundDataset):
         self.key = {
             k: {tok: i for i, tok in enumerate(v)} for k, v in vocabulary.items()
         }
+        assert all(k in ["chars", "phones", "words", "syllables"] for k in vocabulary)
 
     @torch.no_grad()
     def __getitem__(
