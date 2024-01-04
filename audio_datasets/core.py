@@ -45,11 +45,13 @@ class SoundSample:
     sound: (audio: Tensor, sr: int)
     source: (audio: Tensor, sr: int)
     skew: float
+    name: str
     """
 
     sound: tuple[Tensor, int]
     source: tuple[Tensor, int]
     skew: float
+    name: str
 
 
 @dataclass
@@ -59,12 +61,14 @@ class AnnotatedSample:
     source: (audio: Tensor, sr: int, intervals: Interval)
     label: Tensor
     skew: float
+    name: str
     """
 
     sound: tuple[Tensor, int, Interval]
     source: tuple[Tensor, int, Interval]
     label: Tensor
     skew: float
+    name: str
 
 
 @dataclass
@@ -73,11 +77,13 @@ class TokenizedSample:
     sound: (audio: Tensor, sr: int, lengths: Tensor)
     source: (audio: Tensor, sr: int, lengths: Tensor)
     skew: float
+    name: str
     """
 
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     skew: float
+    name: str
 
 
 @dataclass
@@ -87,12 +93,14 @@ class AnnotatedTokenizedSample:
     source: (audio: Tensor, sr: int, lengths: Tensor)
     label: Tensor
     skew: float
+    name: str
     """
 
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     label: Tensor
     skew: float
+    name: str
 
 
 @dataclass
@@ -102,12 +110,14 @@ class MultiAnnotatedSample:
     source: (audio: Tensor, sr: int, intervals: dict[str, Interval])
     label: dict[str, Tensor]
     skew: float
+    name: str
     """
 
     sound: tuple[Tensor, int, dict[str, Interval]]
     source: tuple[Tensor, int, dict[str, Interval]]
     label: dict[str, Tensor]
     skew: float
+    name: str
 
 
 @dataclass
@@ -117,12 +127,14 @@ class SequenceSample:
     source: (audio: Tensor, sr: int, lengths: Tensor, spans: Tensor)
     label: (labels: Tensor, lengths: Tensor, spans: Tensor)
     skew: float
+    name: str
     """
 
     sound: tuple[Tensor, int, Tensor, Tensor]
     source: tuple[Tensor, int, Tensor, Tensor]
     label: tuple[Tensor, Tensor, Tensor]
     skew: float
+    name: str
 
 
 @dataclass
@@ -131,11 +143,13 @@ class SoundBatch:
     sound: (audio: Tensor, sr: int, lengths: Tensor)
     source: (audio: Tensor, sr: int, lengths: Tensor)
     skew: Tensor
+    name: list[str]
     """
 
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     skew: Tensor
+    name: list[str]
 
 
 @dataclass
@@ -145,12 +159,14 @@ class AnnotatedTokenizedBatch:
     source: (audio: Tensor, sr: int, lengths: Tensor)
     label: Tensor
     skew: Tensor
+    name: list[str]
     """
 
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     label: Tensor
     skew: Tensor
+    name: list[str]
 
 
 @dataclass
@@ -160,12 +176,14 @@ class AnnotatedBatch:
     source: (audio: Tensor, sr: int, lengths: Tensor)
     label: (labels: Tensor, lengths: Tensor)
     skew: Tensor
+    name: list[str]
     """
 
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     label: tuple[Tensor, Tensor]
     skew: Tensor
+    name: list[str]
 
 
 @dataclass
@@ -175,12 +193,14 @@ class MultiAnnotatedBatch:
     source: (audio: Tensor, sr: int, lengths: Tensor)
     label: dict[str, (labels: Tensor, lengths: Tensor)]
     skew: Tensor
+    name: list[str]
     """
 
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
     label: dict[str, tuple[Tensor, Tensor]]
     skew: Tensor
+    name: list[str]
 
 
 @dataclass
@@ -190,12 +210,14 @@ class SequenceBatch:
     source: (audio: Tensor, sr: int, lengths: Tensor, spans: Tensor)
     label: (labels: Tensor, lengths: Tensor, spans: Tensor)
     skew: float
+    name: list[str]
     """
 
     sound: tuple[Tensor, int, Tensor, Tensor]
     source: tuple[Tensor, int, Tensor, Tensor]
     label: tuple[Tensor, Tensor, Tensor]
     skew: Tensor
+    name: list[str]
 
 
 class SoundDataset(torch.utils.data.Dataset):
@@ -309,6 +331,7 @@ class SoundDataset(torch.utils.data.Dataset):
             sound=(mix_x, out_sr),
             source=(in_x, out_sr),
             skew=skew,
+            name=in_path,
         )
 
     def set_intensity(self, level: str):
@@ -365,6 +388,7 @@ class SoundDataset(torch.utils.data.Dataset):
 
             sounds, sound_sr = zip(*[s.sound for s in samples])
             sources, source_sr = zip(*[s.source for s in samples])
+            names = [s.name for s in samples]
 
             sounds_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
             source_lens = torch.tensor([len(x) for x in sources], dtype=torch.int)
@@ -390,6 +414,7 @@ class SoundDataset(torch.utils.data.Dataset):
                 sound=(sounds, out_sr, sounds_lens),
                 source=(sources, out_sr, source_lens),
                 skew=skew,
+                name=names,
             )
 
         return torch.utils.data.DataLoader(
@@ -465,6 +490,7 @@ class AnnotatedDataset(SoundDataset):
             source=(source, source_sr, source_intervals),
             label=y,
             skew=sample.skew,
+            name=sample.name,
         )
 
     @property
@@ -491,6 +517,7 @@ class AnnotatedDataset(SoundDataset):
             labels = [s.label for s in samples]
             _, sound_sr, _ = samples[0].sound
             _, source_sr, _ = samples[0].source
+            names = [s.name for s in samples]
 
             sound_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
             source_lens = torch.tensor([len(x) for x in sources], dtype=torch.int)
@@ -527,6 +554,7 @@ class AnnotatedDataset(SoundDataset):
                 source=(sources, source_sr, source_lens),
                 label=(labels, label_lens),
                 skew=skew,
+                name=names,
             )
 
         return torch.utils.data.DataLoader(
@@ -770,6 +798,7 @@ class TokenizedDataset(AnnotatedDataset):
             source=(sources, source_sr, sources_lens),
             label=label,
             skew=skew,
+            name=sample.name,
         )
 
     def iterator(
@@ -788,6 +817,7 @@ class TokenizedDataset(AnnotatedDataset):
             sounds, sound_sr, sounds_lens = zip(*[s.sound for s in samples])
             sources, source_sr, sources_lens = zip(*[s.source for s in samples])
             labels = [s.label for s in samples]
+            names = [s.name for s in samples for _ in range(len(s.sound))]
 
             sounds = torch.cat(sounds, dim=self.batch_dim)
             sources = torch.cat(sources, dim=self.batch_dim)
@@ -801,6 +831,7 @@ class TokenizedDataset(AnnotatedDataset):
                 source=(sources, source_sr[0], sources_lens),
                 label=labels,
                 skew=skew,
+                name=names,
             )
 
         return torch.utils.data.DataLoader(
@@ -991,6 +1022,7 @@ class BlockDataset(SoundDataset):
             sound=(sounds, sound_sr, sounds_lens),
             source=(sources, source_sr, sources_lens),
             skew=sample.skew,
+            name=sample.name,
         )
 
     def iterator(
@@ -1007,6 +1039,7 @@ class BlockDataset(SoundDataset):
 
             sounds, sound_sr, sounds_lens = zip(*[s.sound for s in samples])
             sources, source_sr, sources_lens = zip(*[s.source for s in samples])
+            names = [s.name for s in samples for _ in range(len(s.sound))]
 
             sounds = torch.cat(sounds, dim=self.batch_dim)
             sources = torch.cat(sources, dim=self.batch_dim)
@@ -1030,6 +1063,7 @@ class BlockDataset(SoundDataset):
                 sound=(sounds, sound_sr, sounds_lens),
                 source=(sources, source_sr, sources_lens),
                 skew=skew,
+                name=names,
             )
 
         return torch.utils.data.DataLoader(
@@ -1165,6 +1199,7 @@ class SequenceDataset(AnnotatedDataset):
             source=(sources, source_sr, sources_lens, sources_span),
             label=(labels, labels_lens, labels_span),
             skew=skew,
+            name=sample.name,
         )
 
     def iterator(
@@ -1186,6 +1221,7 @@ class SequenceDataset(AnnotatedDataset):
                 *[s.source for s in samples]
             )
             labels, labels_lens, labels_span = zip(*[s.label for s in samples])
+            names = [s.name for s in samples for _ in range(len(s.sound))]
 
             sounds = torch.cat(sounds, dim=self.batch_dim)
             sources = torch.cat(sources, dim=self.batch_dim)
@@ -1223,6 +1259,7 @@ class SequenceDataset(AnnotatedDataset):
                 source=(sources, source_sr, sources_lens, sources_span),
                 label=(labels, labels_lens, labels_span),
                 skew=skew,
+                name=names,
             )
 
         return torch.utils.data.DataLoader(
@@ -1440,6 +1477,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
             source=(sources, source_sr, sources_lens),
             label=label,
             skew=skew,
+            name=sample.name,
         )
 
     def iterator(
@@ -1457,6 +1495,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
             sounds, sound_sr, sounds_lens = zip(*[s.sound for s in samples])
             sources, source_sr, sources_lens = zip(*[s.source for s in samples])
             labels = [s.label for s in samples]
+            names = [s.name for s in samples for _ in range(len(s.sound))]
 
             sounds = torch.cat(sounds, dim=self.batch_dim)
             sources = torch.cat(sources, dim=self.batch_dim)
@@ -1471,6 +1510,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
                 source=(sources, source_sr, sources_lens),
                 label=labels,
                 skew=skew,
+                name=names,
             )
 
         return torch.utils.data.DataLoader(
@@ -1605,6 +1645,7 @@ class MultiAnnotatedDataset(SoundDataset):
             source=(source, source_sr, source_intervals),
             label=labels,
             skew=sample.skew,
+            name=sample.name,
         )
 
     @property
@@ -1633,6 +1674,7 @@ class MultiAnnotatedDataset(SoundDataset):
             labels = {k: [s.label[k] for s in samples] for k in self.targets}
             _, sound_sr, _ = samples[0].sound
             _, source_sr, _ = samples[0].source
+            names = [s.name for s in samples for _ in range(len(s.sound))]
 
             sound_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
             source_lens = torch.tensor([len(x) for x in sources], dtype=torch.int)
@@ -1676,6 +1718,7 @@ class MultiAnnotatedDataset(SoundDataset):
                 source=(sources, source_sr, source_lens),
                 label={k: (labels[k], label_lens[k]) for k in self.targets},
                 skew=skew,
+                name=names,
             )
 
         return torch.utils.data.DataLoader(
