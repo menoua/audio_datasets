@@ -219,7 +219,7 @@ class SoundDataset(torch.utils.data.Dataset):
         out_sr: Optional[int] = None,
         augmentation: Optional[Callable] = None,
         audio_transform: Optional[Callable] = None,
-        limits: Optional[Limits],
+        limits: Optional[Limits] = None,
         batch_first: bool = True,
     ):
         self.sounds: list[str] = sounds
