@@ -1,5 +1,5 @@
 import math
-from typing import Callable
+from functools import partial
 
 import numpy as np
 from torch import Tensor
@@ -182,7 +182,80 @@ def apply_noise_modifier(
 
 
 def apply_fixed_tempo(
-    audio: Tensor, sr: int, _: dict, factor: float
+    audio: Tensor, sr: int, factor: float = 1.0
 ) -> tuple[Tensor, int]:
     tfm = [["tempo", "-s", str(factor)], ["rate", str(sr)]]
     return apply_sox_effects(audio, sr, tfm)
+
+
+def randfx_and_noise(
+    speech_fx: bool = False,
+    room_fx: bool = False,
+    channel_fx: bool = False,
+    bg_sounds: list[str] = [],
+    level: str = "low",
+    config: dict = {},
+):
+    config = {**_get_config(level), **config}
+
+    xforms = []
+    xforms.append(lambda *x: x)
+    if speech_fx:
+        xforms.append(partial(apply_speech_modifier, config=config))
+    if room_fx:
+        xforms.append(partial(apply_room_modifier, config=config))
+    if channel_fx:
+        xforms.append(partial(apply_channel_modifier, config=config))
+
+    apply_noise_fx = partial(
+        apply_noise_modifier, noise_sounds=bg_sounds, config=config
+    )
+
+    def apply_fx(audio: Tensor, sr: int):
+        audio, sr = np.random.choice(xforms)(audio, sr)
+        audio, sr = apply_sox_effects(audio, sr, [["norm", "-3"]])
+        audio, sr = apply_noise_fx(audio, sr)
+        return audio, sr
+
+    return apply_fx
+
+
+def randfx_or_noise(
+    speech_fx: bool = False,
+    room_fx: bool = False,
+    channel_fx: bool = False,
+    noise_fx: list[str] = [],
+    level: str = "low",
+    config: dict = {},
+):
+    config = {**_get_config(level), **config}
+
+    xforms = []
+    xforms.append(lambda *x: x)
+    if speech_fx:
+        xforms.append(partial(apply_speech_modifier, config=config))
+    if room_fx:
+        xforms.append(partial(apply_room_modifier, config=config))
+    if channel_fx:
+        xforms.append(partial(apply_channel_modifier, config=config))
+    if noise_fx:
+        xforms.append(
+            partial(apply_noise_modifier, noise_sounds=noise_fx, config=config)
+        )
+
+    def apply_fx(audio: Tensor, sr: int):
+        audio, sr = np.random.choice(xforms)(audio, sr)
+        return audio, sr
+
+    return apply_fx
+
+
+def _get_config(level: str) -> dict:
+    if level in ["low"]:
+        return CONFIG_MOD_LO
+    elif level in ["mid", "medium"]:
+        return CONFIG_MOD_MID
+    elif level in ["high"]:
+        return CONFIG_MOD_HI
+    else:
+        raise ValueError("Level should be one of low, mid/medium, high.")

@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 import numpy as np
-import scipy as sp
 import textgrids
 import torch
 import torchaudio
@@ -15,15 +14,6 @@ from torchaudio import load as load_audio
 from torchaudio.sox_effects import apply_effects_tensor as apply_sox_effects
 from tqdm import tqdm
 
-from .augments import (
-    CONFIG_MOD_HI,
-    CONFIG_MOD_LO,
-    CONFIG_MOD_MID,
-    apply_channel_modifier,
-    apply_noise_modifier,
-    apply_room_modifier,
-    apply_speech_modifier,
-)
 from .lexicon import (
     is_postfix,
     is_prefix,
@@ -227,29 +217,17 @@ class SoundDataset(torch.utils.data.Dataset):
         *,
         in_sr: int = 16_000,
         out_sr: Optional[int] = None,
+        augmentation: Optional[Callable] = None,
         audio_transform: Optional[Callable] = None,
         limits: Optional[Limits],
-        mod_speech: bool = False,
-        mod_room: bool = False,
-        mod_channel: bool = False,
-        mod_scene: list[str] = [],
-        mod_foreground: Optional[Callable] = None,
-        mod_final: Optional[Callable] = None,
-        mod_intensity: str = "low",
         batch_first: bool = True,
     ):
         self.sounds: list[str] = sounds
         self.in_sr: int = in_sr
         self.out_sr: Optional[int] = out_sr
+        self.augmentation: Optional[Callable] = augmentation
         self.audio_transform: Optional[Callable] = audio_transform
         self.limits: Optional[Limits] = limits
-        self.mod_speech: bool = mod_speech
-        self.mod_room: bool = mod_room
-        self.mod_channel: bool = mod_channel
-        self.mod_scene: list[str] = mod_scene
-        self.mod_foreground: Optional[Callable] = mod_foreground
-        self.mod_final: Optional[Callable] = mod_final
-        self.set_intensity(mod_intensity)
         self.batch_dim = 0 if batch_first else 1
 
     def __len__(self):
@@ -259,51 +237,20 @@ class SoundDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx: int, waveform: bool = False) -> SoundSample:
         in_path = self.sounds[idx]
 
-        xforms = []
-        xforms.append("none")
-        if self.mod_speech:
-            xforms.append("mod_speech")
-        if self.mod_room:
-            xforms.append("mod_room")
-        if self.mod_channel:
-            xforms.append("mod_channel")
-        fx = np.random.choice(xforms)
-
         # load and resample audio
         in_audio, in_sr = load_audio(in_path)
         in_audio, in_sr = apply_sox_effects(
-            in_audio, in_sr, [["rate", str(self.in_sr)], ["channels", "1"]]
+            in_audio,
+            in_sr,
+            [["rate", str(self.in_sr)], ["channels", "1"], ["norm", "-3"]],
         )
 
-        # process audio using built-in modifiers
-        mix_audio, mix_sr = in_audio, in_sr
-        if fx == "mod_speech":
-            mix_audio, mix_sr = apply_speech_modifier(in_audio, in_sr, self.mod_config)
-        elif fx == "mod_room":
-            mix_audio, mix_sr = apply_room_modifier(in_audio, in_sr, self.mod_config)
-        elif fx == "mod_channel":
-            mix_audio, mix_sr = apply_channel_modifier(in_audio, in_sr, self.mod_config)
+        # apply optional augmentation to source audio
+        if self.augmentation:
+            mix_audio, mix_sr = self.augmentation(in_audio, in_sr)
+            mix_audio, mix_sr = apply_sox_effects(mix_audio, mix_sr, [["norm", "-3"]])
         else:
             mix_audio, mix_sr = in_audio, in_sr
-
-        # apply custom modification to audio
-        if self.mod_foreground:
-            mix_audio, mix_sr = self.mod_foreground(mix_audio, mix_sr, self.mod_config)
-
-        # normalize volume
-        mix_audio, mix_sr = apply_sox_effects(mix_audio, mix_sr, [["norm", "-3"]])
-
-        # apply additive noise to processed and normalized audio
-        if self.mod_scene:
-            mix_audio, mix_sr = apply_noise_modifier(
-                mix_audio, mix_sr, self.mod_scene, self.mod_config
-            )
-            mix_audio, mix_sr = apply_sox_effects(mix_audio, mix_sr, [["norm", "-3"]])
-
-        # apply custom modification to final audio after normalization and noise
-        if self.mod_final:
-            mix_audio, mix_sr = self.mod_final(mix_audio, mix_sr, self.mod_config)
-            mix_audio, mix_sr = apply_sox_effects(mix_audio, mix_sr, [["norm", "-3"]])
 
         # make sure sampling rate wasn't changed during processing
         if mix_sr != in_sr:
@@ -334,39 +281,9 @@ class SoundDataset(torch.utils.data.Dataset):
             name=in_path,
         )
 
-    def set_intensity(self, level: str):
-        if level in ["low"]:
-            self.mod_config = CONFIG_MOD_LO
-        elif level in ["mid", "medium"]:
-            self.mod_config = CONFIG_MOD_MID
-        elif level in ["high"]:
-            self.mod_config = CONFIG_MOD_HI
-        else:
-            raise ValueError(
-                "Modification intensity should be one of low, mid/medium, high."
-            )
-
-        self.mod_intensity = level
-
+    def augment(self, augmentation: Optional[Callable]):
+        self.augmentation = augmentation
         return self
-
-    def augment(
-        self,
-        mod_speech: bool = False,
-        mod_room: bool = False,
-        mod_channel: bool = False,
-        mod_scene: list[str] = [],
-        mod_foreground: Optional[Callable] = None,
-        mod_final: Optional[Callable] = None,
-        mod_intensity: str = "low",
-    ):
-        self.mod_speech = mod_speech
-        self.mod_room = mod_room
-        self.mod_channel = mod_channel
-        self.mod_scene = mod_scene
-        self.mod_foreground = mod_foreground
-        self.mod_final = mod_final
-        self.mod_intensity = mod_intensity
 
     def limit(self, limits: Optional[Limits]):
         self.limits = limits
