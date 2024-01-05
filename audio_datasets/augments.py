@@ -192,8 +192,8 @@ def randfx_and_noise(
     speech_fx: bool = False,
     room_fx: bool = False,
     channel_fx: bool = False,
-    noise_fx: list[str] = [],
     no_fx: bool = True,
+    noise_fx: list[str] = [],
     level: str = "low",
     config: dict = {},
 ):
@@ -226,8 +226,8 @@ def randfx_or_noise(
     speech_fx: bool = False,
     room_fx: bool = False,
     channel_fx: bool = False,
-    noise_fx: list[str] = [],
     no_fx: bool = True,
+    noise_fx: list[str] = [],
     level: str = "low",
     config: dict = {},
 ):
