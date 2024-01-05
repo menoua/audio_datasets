@@ -12,6 +12,7 @@ class LibriSpeechDataloader:
     def __init__(
         self,
         dataset_type=AnnotatedDataset,
+        *,
         target: str = "words",
         labels: Optional[list[str]] = None,
         limits: Optional[Limits] = LIMITS["librispeech"]["max"],
@@ -102,6 +103,7 @@ class LibriSpeechDataloader:
 class LibriSpeechSequenceDataloader(LibriSpeechDataloader):
     def __init__(
         self,
+        *,
         seq_size: int = 20,
         seq_min: int = 1,
         seq_time: float = 8.0,
@@ -133,6 +135,7 @@ class LibriSpeechSequenceDataloader(LibriSpeechDataloader):
 class LibriSpeechTokenDataloader(LibriSpeechDataloader):
     def __init__(
         self,
+        *,
         duration: float = 1,
         scale: bool = False,
         context: tuple[int, int] = (0, 0),
@@ -155,6 +158,7 @@ class LibriSpeechTokenDataloader(LibriSpeechDataloader):
 class LibriSpeechMultiDataloader(LibriSpeechDataloader):
     def __init__(
         self,
+        *,
         labels: Optional[dict[str, list[str]]] = None,
         **kwargs,
     ):
