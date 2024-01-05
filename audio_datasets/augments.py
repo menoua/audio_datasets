@@ -192,24 +192,26 @@ def randfx_and_noise(
     speech_fx: bool = False,
     room_fx: bool = False,
     channel_fx: bool = False,
-    bg_sounds: list[str] = [],
+    noise_fx: list[str] = [],
+    no_fx: bool = True,
     level: str = "low",
     config: dict = {},
 ):
     config = {**_get_config(level), **config}
 
     xforms = []
-    xforms.append(lambda *x: x)
+    if no_fx:
+        xforms.append(lambda *x: x)
     if speech_fx:
         xforms.append(partial(apply_speech_modifier, config=config))
     if room_fx:
         xforms.append(partial(apply_room_modifier, config=config))
     if channel_fx:
         xforms.append(partial(apply_channel_modifier, config=config))
+    if not xforms:
+        raise ValueError("At least one effect should be enabled")
 
-    apply_noise_fx = partial(
-        apply_noise_modifier, noise_sounds=bg_sounds, config=config
-    )
+    apply_noise_fx = partial(apply_noise_modifier, noise_sounds=noise_fx, config=config)
 
     def apply_fx(audio: Tensor, sr: int):
         audio, sr = np.random.choice(xforms)(audio, sr)
@@ -225,13 +227,15 @@ def randfx_or_noise(
     room_fx: bool = False,
     channel_fx: bool = False,
     noise_fx: list[str] = [],
+    no_fx: bool = True,
     level: str = "low",
     config: dict = {},
 ):
     config = {**_get_config(level), **config}
 
     xforms = []
-    xforms.append(lambda *x: x)
+    if no_fx:
+        xforms.append(lambda *x: x)
     if speech_fx:
         xforms.append(partial(apply_speech_modifier, config=config))
     if room_fx:
@@ -242,6 +246,8 @@ def randfx_or_noise(
         xforms.append(
             partial(apply_noise_modifier, noise_sounds=noise_fx, config=config)
         )
+    if not xforms:
+        raise ValueError("At least one effect should be enabled")
 
     def apply_fx(audio: Tensor, sr: int):
         audio, sr = np.random.choice(xforms)(audio, sr)
