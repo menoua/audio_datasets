@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Union
 
 
 @dataclass
@@ -16,6 +17,23 @@ class Limits:
             "syllables": self.syllables,
             "words": self.words,
         }[targets]
+
+    def with_limit(self, key: str, value: Union[int, float]):
+        if key not in ["time", "chars", "phones", "syllables", "words"]:
+            raise ValueError(
+                "key has to be one of time, chars, phones, syllables, words"
+            )
+
+        return Limits(
+            **{
+                "time": self.time,
+                "chars": self.chars,
+                "phones": self.phones,
+                "syllables": self.syllables,
+                "words": self.words,
+                key: value,
+            }
+        )
 
 
 LIMITS = {

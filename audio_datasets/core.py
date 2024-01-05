@@ -554,14 +554,15 @@ class AnnotatedDataset(SoundDataset):
         return torch.tensor(target), interv
 
     def _get_limits(self, intervals: list[tuple[float, float]]) -> Optional[Limits]:
-        if self.limits is None:
+        limits = self.limits
+        if limits is None:
             return None
 
-        if self.limits.time < intervals[-1][1]:
-            max_time = [end for _, end in intervals if end <= self.limits.time][-1]
+        if limits.time < intervals[-1][1]:
+            max_time = [end for _, end in intervals if end <= limits.time][-1]
         else:
-            max_time = self.limits.time
-        max_tokens = self.limits.tokens(self.target)
+            max_time = limits.time
+        max_tokens = limits.tokens(self.target)
 
         if len(intervals) > max_tokens:
             time_limit_equiv = intervals[max_tokens][0]
@@ -572,7 +573,7 @@ class AnnotatedDataset(SoundDataset):
         max_time = min(max_time, time_limit_equiv)
         max_tokens = min(max_tokens, token_limit_equiv)
 
-        return Limits(time=max_time, **{self.target: max_tokens})
+        return limits.with_limit("time", max_time).with_limit(self.target, max_tokens)
 
 
 class TokenizedDataset(AnnotatedDataset):
