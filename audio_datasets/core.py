@@ -164,14 +164,14 @@ class AnnotatedBatch:
     """
     sound: (audio: Tensor, sr: int, lengths: Tensor)
     source: (audio: Tensor, sr: int, lengths: Tensor)
-    label: (labels: Tensor, lengths: Tensor)
+    label: (labels: Tensor, lengths: Tensor, intervals: Tensor)
     skew: Tensor
     name: list[str]
     """
 
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
-    label: tuple[Tensor, Tensor]
+    label: tuple[Tensor, Tensor, Tensor]
     skew: Tensor
     name: list[str]
 
@@ -181,14 +181,14 @@ class MultiAnnotatedBatch:
     """
     sound: (audio: Tensor, sr: int, lengths: Tensor)
     source: (audio: Tensor, sr: int, lengths: Tensor)
-    label: dict[str, (labels: Tensor, lengths: Tensor)]
+    label: dict[str, (labels: Tensor, lengths: Tensor, intervals: Tensor)]
     skew: Tensor
     name: list[str]
     """
 
     sound: tuple[Tensor, int, Tensor]
     source: tuple[Tensor, int, Tensor]
-    label: dict[str, tuple[Tensor, Tensor]]
+    label: dict[str, tuple[Tensor, Tensor, Tensor]]
     skew: Tensor
     name: list[str]
 
@@ -434,6 +434,9 @@ class AnnotatedDataset(SoundDataset):
             labels = [s.label for s in samples]
             _, sound_sr, _ = samples[0].sound
             _, source_sr, _ = samples[0].source
+            intervals = [
+                torch.round(torch.tensor(s.sound[2]) * sound_sr).int() for s in samples
+            ]
             names = [s.name for s in samples]
 
             sound_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
@@ -457,19 +460,24 @@ class AnnotatedDataset(SoundDataset):
                 labels = [
                     _pad_axis(y, 0, max_label_len - len(y), axis=0) for y in labels
                 ]
+                intervals = [
+                    _pad_axis(t, 0, max_label_len - len(t), axis=0) for t in intervals
+                ]
 
             sounds = torch.stack(sounds, dim=self.batch_dim)
             sources = torch.stack(sources, dim=self.batch_dim)
             if flat_labels:
                 labels = torch.cat(labels)
+                intervals = torch.cat(intervals)
             else:
                 labels = torch.stack(labels, dim=self.batch_dim)
+                intervals = torch.stack(intervals, dim=self.batch_dim)
             skew = torch.tensor([s.skew for s in samples])
 
             return AnnotatedBatch(
                 sound=(sounds, sound_sr, sound_lens),
                 source=(sources, source_sr, source_lens),
-                label=(labels, label_lens),
+                label=(labels, label_lens, intervals),
                 skew=skew,
                 name=names,
             )
@@ -1593,6 +1601,13 @@ class MultiAnnotatedDataset(SoundDataset):
             labels = {k: [s.label[k] for s in samples] for k in self.targets}
             _, sound_sr, _ = samples[0].sound
             _, source_sr, _ = samples[0].source
+            intervals = {
+                k: [
+                    torch.round(torch.tensor(s.sound[2][k]) * sound_sr).int()
+                    for s in samples
+                ]
+                for k in self.targets
+            }
             names = [s.name for s in samples]
 
             sound_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
@@ -1621,21 +1636,32 @@ class MultiAnnotatedDataset(SoundDataset):
                         _pad_axis(y, 0, max_label_len[k] - len(y), axis=0)
                         for y in labels[k]
                     ]
+                    intervals[k] = [
+                        _pad_axis(t, 0, max_label_len[k] - len(t), axis=0)
+                        for t in intervals[k]
+                    ]
 
             sounds = torch.stack(sounds, dim=self.batch_dim)
             sources = torch.stack(sources, dim=self.batch_dim)
             if flat_labels:
                 labels = {k: torch.cat(labels[k]) for k in self.targets}
+                intervals = {k: torch.cat(intervals[k]) for k in self.targets}
             else:
                 labels = {
                     k: torch.stack(labels[k], dim=self.batch_dim) for k in self.targets
+                }
+                intervals = {
+                    k: torch.stack(intervals[k], dim=self.batch_dim)
+                    for k in self.targets
                 }
             skew = torch.tensor([s.skew for s in samples])
 
             return MultiAnnotatedBatch(
                 sound=(sounds, sound_sr, sound_lens),
                 source=(sources, source_sr, source_lens),
-                label={k: (labels[k], label_lens[k]) for k in self.targets},
+                label={
+                    k: (labels[k], label_lens[k], intervals[k]) for k in self.targets
+                },
                 skew=skew,
                 name=names,
             )
