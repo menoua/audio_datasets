@@ -853,12 +853,14 @@ class TokenizedDataset(AnnotatedDataset):
             if batch is None:
                 continue
 
-            stats["identity"].append(
-                np.array([self.vocabulary[_] for _ in batch.label], dtype=object)
-            )
-            stats["length"].append(batch.sound_length.numpy() / batch.rate)
-            count += len(batch.sound)
-            pbar.update(len(batch.sound))
+            labels = np.array([self.vocabulary[idx] for idx in batch.label], dtype=object)
+            sample_rate = batch.sound[1]
+            sound_lengths = np.array(batch.sound[2])
+
+            stats["identity"].append(labels)
+            stats["length"].append(sound_lengths / sample_rate)
+            count += len(labels)
+            pbar.update(len(labels))
 
         stats = {k: np.concatenate(stats[k], axis=0)[:n] for k in stats}
 
