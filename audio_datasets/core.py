@@ -7,7 +7,6 @@ from typing import Callable, Optional
 import numpy as np
 import textgrids
 import torch
-import torchaudio
 from scipy.interpolate import RectBivariateSpline
 from torch import Tensor
 from torchaudio import load as load_audio
@@ -23,8 +22,6 @@ from .lexicon import (
     syllabize,
 )
 from .limits import Limits
-
-torchaudio.set_audio_backend("sox_io")
 
 Interval = list[tuple[float, float]]
 
@@ -254,9 +251,7 @@ class SoundDataset(torch.utils.data.Dataset):
 
         # make sure sampling rate wasn't changed during processing
         if mix_sr != in_sr:
-            raise RuntimeError(
-                "Changing the audio sampling rate during audio processing is not supported"
-            )
+            raise RuntimeError("Changing the audio sampling rate during audio processing is not supported")
 
         # calculate skew
         skew = mix_audio.shape[1] / in_audio.shape[1]
@@ -319,9 +314,7 @@ class SoundDataset(torch.utils.data.Dataset):
                 max_sources_len = int(source_lens.max())
 
             sounds = [_pad_axis(x, 0, max_sounds_len - len(x), axis=0) for x in sounds]
-            sources = [
-                _pad_axis(x, 0, max_sources_len - len(x), axis=0) for x in sources
-            ]
+            sources = [_pad_axis(x, 0, max_sources_len - len(x), axis=0) for x in sources]
 
             sounds = torch.stack(sounds, dim=self.batch_dim)
             sources = torch.stack(sources, dim=self.batch_dim)
@@ -359,9 +352,7 @@ class AnnotatedDataset(SoundDataset):
         self.annotations = annotations
         self.vocabulary = vocabulary
         self.target = target
-        self.stressed = target in ("phones", "syllables") and any(
-            is_stressed(w) for w in vocabulary
-        )
+        self.stressed = target in ("phones", "syllables") and any(is_stressed(w) for w in vocabulary)
         self.normalize = normalize
         self.spaced = " " in vocabulary
         self.include_na = "[UNK]" in vocabulary
@@ -382,9 +373,7 @@ class AnnotatedDataset(SoundDataset):
         skew = sample.skew
 
         y, source_intervals = self._annotation(self.annotations[idx])
-        sound_intervals = [
-            (start * skew, stop * skew) for start, stop in source_intervals
-        ]
+        sound_intervals = [(start * skew, stop * skew) for start, stop in source_intervals]
         if len(y) == 0:
             return None
 
@@ -434,9 +423,7 @@ class AnnotatedDataset(SoundDataset):
             labels = [s.label for s in samples]
             _, sound_sr, _ = samples[0].sound
             _, source_sr, _ = samples[0].source
-            intervals = [
-                torch.round(torch.tensor(s.sound[2]) * sound_sr).int() for s in samples
-            ]
+            intervals = [torch.round(torch.tensor(s.sound[2]) * sound_sr).int() for s in samples]
             names = [s.name for s in samples]
 
             sound_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
@@ -453,16 +440,10 @@ class AnnotatedDataset(SoundDataset):
                 max_label_len = int(label_lens.max())
 
             sounds = [_pad_axis(x, 0, max_sound_len - len(x), axis=0) for x in sounds]
-            sources = [
-                _pad_axis(x, 0, max_source_len - len(x), axis=0) for x in sources
-            ]
+            sources = [_pad_axis(x, 0, max_source_len - len(x), axis=0) for x in sources]
             if not flat_labels:
-                labels = [
-                    _pad_axis(y, 0, max_label_len - len(y), axis=0) for y in labels
-                ]
-                intervals = [
-                    _pad_axis(t, 0, max_label_len - len(t), axis=0) for t in intervals
-                ]
+                labels = [_pad_axis(y, 0, max_label_len - len(y), axis=0) for y in labels]
+                intervals = [_pad_axis(t, 0, max_label_len - len(t), axis=0) for t in intervals]
 
             sounds = torch.stack(sounds, dim=self.batch_dim)
             sources = torch.stack(sources, dim=self.batch_dim)
@@ -510,9 +491,7 @@ class AnnotatedDataset(SoundDataset):
                 textgrid = textgrid[self.target]
             # drop silence tokens
             textgrid = (
-                [item for item in textgrid if item.text not in ["", "sp", "spn", "sil"]]
-                if ignore_silence
-                else textgrid
+                [item for item in textgrid if item.text not in ["", "sp", "spn", "sil"]] if ignore_silence else textgrid
             )
             # transform to standard labels
             for item in textgrid:
@@ -521,9 +500,7 @@ class AnnotatedDataset(SoundDataset):
             target = [item.text for item in textgrid]
             interv = [(item.xmin, item.xmax) for item in textgrid]
         elif fmt == "swc":
-            raise NotImplementedError(
-                "Spoken Wikipedia annotation not yet implemented!"
-            )
+            raise NotImplementedError("Spoken Wikipedia annotation not yet implemented!")
         elif fmt == "tedlium":
             raise NotImplementedError("TED-LIUM r3 annotation not yet implemented!")
         else:
@@ -538,10 +515,7 @@ class AnnotatedDataset(SoundDataset):
                 subtokens = normalize_token(token)  # , self.vocabulary)
                 expanded_target += subtokens
                 expanded_interv += [
-                    intv
-                    if not is_subtoken(t)
-                    else (intv[:1] * 2 if is_prefix(t) else intv[1:] * 2)
-                    for t in subtokens
+                    intv if not is_subtoken(t) else (intv[:1] * 2 if is_prefix(t) else intv[1:] * 2) for t in subtokens
                 ]
             target, interv = expanded_target, expanded_interv
 
@@ -608,9 +582,7 @@ class TokenizedDataset(AnnotatedDataset):
         assert self.alignment in ["left", "center", "right"]
         assert context[0] >= 0 and context[1] >= 0
 
-    def __getitem__(
-        self, idx: int, waveform: bool = False
-    ) -> Optional[AnnotatedTokenizedSample]:
+    def __getitem__(self, idx: int, waveform: bool = False) -> Optional[AnnotatedTokenizedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
         if sample is None:
             return None
@@ -647,9 +619,7 @@ class TokenizedDataset(AnnotatedDataset):
         freqs = np.linspace(1, freqbins, freqbins)
 
         if not self.scale:
-            will_fit = [
-                i for i, length in enumerate(sounds_lens) if length <= sound_fix_t
-            ]
+            will_fit = [i for i, length in enumerate(sounds_lens) if length <= sound_fix_t]
             sounds = [sounds[i] for i in will_fit]
             sounds_lens = [sounds_lens[i] for i in will_fit]
             sources = [sources[i] for i in will_fit]
@@ -667,9 +637,7 @@ class TokenizedDataset(AnnotatedDataset):
                 else:
                     t0 = np.linspace(1, len(x), len(x))
                     t1 = np.linspace(1, len(x), sound_fix_t)
-                    sounds[i] = torch.from_numpy(
-                        RectBivariateSpline(t0, freqs, x)(t1, freqs)
-                    )
+                    sounds[i] = torch.from_numpy(RectBivariateSpline(t0, freqs, x)(t1, freqs))
                     sounds_lens[i] = sound_fix_t
             else:
                 diff = sound_fix_t - len(x)
@@ -690,9 +658,7 @@ class TokenizedDataset(AnnotatedDataset):
                 else:
                     t0 = np.linspace(1, len(x), len(x))
                     t1 = np.linspace(1, len(x), source_fix_t)
-                    sources[i] = torch.from_numpy(
-                        RectBivariateSpline(t0, freqs, x)(t1, freqs)
-                    )
+                    sources[i] = torch.from_numpy(RectBivariateSpline(t0, freqs, x)(t1, freqs))
                     sources_lens[i] = source_fix_t
             else:
                 diff = source_fix_t - len(x)
@@ -838,11 +804,7 @@ class TokenizedDataset(AnnotatedDataset):
         stats = {"length": [], "identity": []}
 
         pbar = tqdm(range(n))
-        it = iter(
-            self.iterator(
-                shuffle=shuffle, batch_size=batch_size, num_workers=num_workers
-            )
-        )
+        it = iter(self.iterator(shuffle=shuffle, batch_size=batch_size, num_workers=num_workers))
 
         while count < n:
             try:
@@ -886,9 +848,7 @@ class BlockDataset(SoundDataset):
         self.max_step = max_time if max_step is None else max_step
         self.prepad = prepad
 
-    def __getitem__(
-        self, idx: int, waveform: bool = False
-    ) -> Optional[TokenizedSample]:
+    def __getitem__(self, idx: int, waveform: bool = False) -> Optional[TokenizedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
         sound, sound_sr = sample.sound
         source, source_sr = sample.source
@@ -931,18 +891,8 @@ class BlockDataset(SoundDataset):
         if not sounds:
             return None
 
-        sounds = torch.stack(
-            [
-                _pad_axis(x, 0, sound_maxblk - len(x), axis=self.batch_dim)
-                for x in sounds
-            ]
-        )
-        sources = torch.stack(
-            [
-                _pad_axis(x, 0, source_maxblk - len(x), axis=self.batch_dim)
-                for x in sources
-            ]
-        )
+        sounds = torch.stack([_pad_axis(x, 0, sound_maxblk - len(x), axis=self.batch_dim) for x in sounds])
+        sources = torch.stack([_pad_axis(x, 0, source_maxblk - len(x), axis=self.batch_dim) for x in sources])
         sounds_lens = torch.tensor(sounds_lens, dtype=torch.int)
         sources_lens = torch.tensor(sources_lens, dtype=torch.int)
 
@@ -976,14 +926,8 @@ class BlockDataset(SoundDataset):
             skew = torch.tensor([s.skew for s in samples])
 
             if batch_max is not None:
-                sounds = (
-                    sounds[:batch_max] if self.batch_dim == 0 else sounds[:, :batch_max]
-                )
-                sources = (
-                    sources[:batch_max]
-                    if self.batch_dim == 0
-                    else sources[:, :batch_max]
-                )
+                sounds = sounds[:batch_max] if self.batch_dim == 0 else sounds[:, :batch_max]
+                sources = sources[:batch_max] if self.batch_dim == 0 else sources[:, :batch_max]
                 sounds_lens = sounds_lens[:batch_max]
                 sources_lens = sources_lens[:batch_max]
 
@@ -1068,9 +1012,7 @@ class SequenceDataset(AnnotatedDataset):
                 if length > self.seq_size or index + length > len(interval):
                     length = init_length
 
-                while length >= self.seq_min and is_prefix(
-                    self.vocabulary[label[index + length - 1]]
-                ):
+                while length >= self.seq_min and is_prefix(self.vocabulary[label[index + length - 1]]):
                     length -= 1
                 if length < self.seq_min:
                     index += 1
@@ -1142,12 +1084,8 @@ class SequenceDataset(AnnotatedDataset):
             if not samples:
                 return None
 
-            sounds, sound_sr, sounds_lens, sounds_span = zip(
-                *[s.sound for s in samples]
-            )
-            sources, source_sr, sources_lens, sources_span = zip(
-                *[s.source for s in samples]
-            )
+            sounds, sound_sr, sounds_lens, sounds_span = zip(*[s.sound for s in samples])
+            sources, source_sr, sources_lens, sources_span = zip(*[s.source for s in samples])
             labels, labels_lens, labels_span = zip(*[s.label for s in samples])
             names = [s.name for s in samples]
 
@@ -1164,17 +1102,9 @@ class SequenceDataset(AnnotatedDataset):
 
             # batch_size = xs.shape[self.batch_dim]
             if batch_max is not None:
-                sounds = (
-                    sounds[:batch_max] if self.batch_dim == 0 else sounds[:, :batch_max]
-                )
-                sources = (
-                    sources[:batch_max]
-                    if self.batch_dim == 0
-                    else sources[:, :batch_max]
-                )
-                labels = (
-                    labels[:batch_max] if self.batch_dim == 0 else labels[:, :batch_max]
-                )
+                sounds = sounds[:batch_max] if self.batch_dim == 0 else sounds[:, :batch_max]
+                sources = sources[:batch_max] if self.batch_dim == 0 else sources[:, :batch_max]
+                labels = labels[:batch_max] if self.batch_dim == 0 else labels[:, :batch_max]
                 sounds_lens = sounds_lens[:batch_max]
                 sources_lens = sources_lens[:batch_max]
                 labels_lens = labels_lens[:batch_max]
@@ -1267,11 +1197,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
             for k, length in lengths.items()
             if (vocabulary is None or k in vocabulary)
             and len(length) >= 100
-            and (
-                np.quantile(length, 0.5 + alpha / 2)
-                / np.quantile(length, 0.5 - alpha / 2)
-                >= max_stretch
-            )
+            and (np.quantile(length, 0.5 + alpha / 2) / np.quantile(length, 0.5 - alpha / 2) >= max_stretch)
         ]
         acc_range = dict(
             [
@@ -1295,9 +1221,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
         self.acc_range = acc_range
         self.rate = rate
 
-    def __getitem__(
-        self, idx: int, waveform: bool = False
-    ) -> Optional[AnnotatedTokenizedSample]:
+    def __getitem__(self, idx: int, waveform: bool = False) -> Optional[AnnotatedTokenizedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
         if sample is None:
             return None
@@ -1317,28 +1241,18 @@ class SymmetricTokenDataset(AnnotatedDataset):
             return None
         label, sound_interval, source_interval = zip(*yint_filt)
 
-        sound_interval = [
-            (int(start * sound_sr), int(stop * sound_sr))
-            for start, stop in sound_interval
-        ]
-        source_interval = [
-            (int(start * source_sr), int(stop * source_sr))
-            for start, stop in source_interval
-        ]
+        sound_interval = [(int(start * sound_sr), int(stop * sound_sr)) for start, stop in sound_interval]
+        source_interval = [(int(start * source_sr), int(stop * source_sr)) for start, stop in source_interval]
         # durations = [stop - start for start, stop in intervals]
         sound_centers = [(start + stop) // 2 for start, stop in sound_interval]
         source_centers = [(start + stop) // 2 for start, stop in source_interval]
 
         context = int(self.context * sound_sr)
         pre_context, post_context = math.floor(context / 2), math.ceil(context / 2)
-        sound_interval = [
-            (center - pre_context, center + post_context) for center in sound_centers
-        ]
+        sound_interval = [(center - pre_context, center + post_context) for center in sound_centers]
         context = int(self.context * source_sr)
         pre_context, post_context = math.floor(context / 2), math.ceil(context / 2)
-        source_interval = [
-            (center - pre_context, center + post_context) for center in source_centers
-        ]
+        source_interval = [(center - pre_context, center + post_context) for center in source_centers]
 
         yint_filt = [
             (token, snd_intv, src_intv)
@@ -1368,9 +1282,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
                     # x[i] = librosa.effects.time_stretch(xi, context/target_t)
                     raise NotImplementedError()
                 else:
-                    sounds[i] = torch.from_numpy(
-                        RectBivariateSpline(t0, freqs, xi)(t1, freqs)
-                    )
+                    sounds[i] = torch.from_numpy(RectBivariateSpline(t0, freqs, xi)(t1, freqs))
 
         sources = [source[start:stop] for start, stop in source_interval]
         target_t = int(self.context * source_sr * scale_factor)
@@ -1385,9 +1297,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
                     # x[i] = librosa.effects.time_stretch(xi, context/target_t)
                     raise NotImplementedError()
                 else:
-                    sources[i] = torch.from_numpy(
-                        RectBivariateSpline(t0, freqs, xi)(t1, freqs)
-                    )
+                    sources[i] = torch.from_numpy(RectBivariateSpline(t0, freqs, xi)(t1, freqs))
 
         sounds_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
         sources_lens = torch.tensor([len(x) for x in sources], dtype=torch.int)
@@ -1463,11 +1373,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
         xs, ys = [], []
 
         pbar = tqdm(range(n))
-        it = iter(
-            self.iterator(
-                shuffle=shuffle, batch_size=batch_size, num_workers=num_workers
-            )
-        )
+        it = iter(self.iterator(shuffle=shuffle, batch_size=batch_size, num_workers=num_workers))
         while len(xs) < n:
             try:
                 x, y = next(it)
@@ -1483,10 +1389,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
                 if yi not in token_per_word:
                     token_per_word[yi] = 0
 
-                if (
-                    max_token_per_word is None
-                    or token_per_word[yi] < max_token_per_word
-                ):
+                if max_token_per_word is None or token_per_word[yi] < max_token_per_word:
                     xs.append(xi)
                     ys.append(yi)
                     token_per_word[yi] += 1
@@ -1495,11 +1398,7 @@ class SymmetricTokenDataset(AnnotatedDataset):
             pbar.update(batch_count)
 
         xs = torch.stack(xs, dim=0)[:n]
-        ys = (
-            np.array([self.vocabulary[y] for y in ys])[:n]
-            if return_labels
-            else torch.tensor(ys)[:n]
-        )
+        ys = np.array([self.vocabulary[y] for y in ys])[:n] if return_labels else torch.tensor(ys)[:n]
 
         return xs, ys
 
@@ -1519,23 +1418,18 @@ class MultiAnnotatedDataset(SoundDataset):
         self.annotations = annotations
         self.vocabulary = vocabulary
         self.stressed = {
-            k: k in ("phones", "syllables") and any(is_stressed(w) for w in v)
-            for k, v in vocabulary.items()
+            k: k in ("phones", "syllables") and any(is_stressed(w) for w in v) for k, v in vocabulary.items()
         }
         self.normalize = normalize
         self.spaced = {k: " " in v for k, v in vocabulary.items()}
         self.include_na = {k: "[UNK]" in v for k, v in vocabulary.items()}
         self.ignore_silence = ignore_silence
         self.targets = sorted(vocabulary.keys())
-        self.key = {
-            k: {tok: i for i, tok in enumerate(v)} for k, v in vocabulary.items()
-        }
+        self.key = {k: {tok: i for i, tok in enumerate(v)} for k, v in vocabulary.items()}
         assert all(k in ["chars", "phones", "words", "syllables"] for k in vocabulary)
 
     @torch.no_grad()
-    def __getitem__(
-        self, idx: int, waveform: bool = False
-    ) -> Optional[MultiAnnotatedSample]:
+    def __getitem__(self, idx: int, waveform: bool = False) -> Optional[MultiAnnotatedSample]:
         sample = super().__getitem__(idx, waveform=waveform)
         sound, sound_sr = sample.sound
         source, source_sr = sample.source
@@ -1546,9 +1440,7 @@ class MultiAnnotatedDataset(SoundDataset):
         source_intervals = {}
         for k in self.targets:
             labels[k], source_intervals[k] = self._annotation(self.annotations[idx], k)
-            sound_intervals[k] = [
-                (start * skew, stop * skew) for start, stop in source_intervals[k]
-            ]
+            sound_intervals[k] = [(start * skew, stop * skew) for start, stop in source_intervals[k]]
             if len(labels[k]) == 0:
                 return None
 
@@ -1562,12 +1454,8 @@ class MultiAnnotatedDataset(SoundDataset):
             sound = sound[: int(limits.time * sound_sr)]
             source = source[: int(limits.time / skew * source_sr)]
             labels = {k: labels[k][: limits.tokens(k)] for k in self.targets}
-            sound_intervals = {
-                k: sound_intervals[k][: limits.tokens(k)] for k in self.targets
-            }
-            source_intervals = {
-                k: source_intervals[k][: limits.tokens(k)] for k in self.targets
-            }
+            sound_intervals = {k: sound_intervals[k][: limits.tokens(k)] for k in self.targets}
+            source_intervals = {k: source_intervals[k][: limits.tokens(k)] for k in self.targets}
 
         return MultiAnnotatedSample(
             sound=(sound, sound_sr, sound_intervals),
@@ -1604,20 +1492,13 @@ class MultiAnnotatedDataset(SoundDataset):
             _, sound_sr, _ = samples[0].sound
             _, source_sr, _ = samples[0].source
             intervals = {
-                k: [
-                    torch.round(torch.tensor(s.sound[2][k]) * sound_sr).int()
-                    for s in samples
-                ]
-                for k in self.targets
+                k: [torch.round(torch.tensor(s.sound[2][k]) * sound_sr).int() for s in samples] for k in self.targets
             }
             names = [s.name for s in samples]
 
             sound_lens = torch.tensor([len(x) for x in sounds], dtype=torch.int)
             source_lens = torch.tensor([len(x) for x in sources], dtype=torch.int)
-            label_lens = {
-                k: torch.tensor([len(y) for y in labels[k]], dtype=torch.int)
-                for k in self.targets
-            }
+            label_lens = {k: torch.tensor([len(y) for y in labels[k]], dtype=torch.int) for k in self.targets}
 
             if full_tensor and self.limits is not None:
                 max_sound_len = int(self.limits.time * sound_sr)
@@ -1629,19 +1510,11 @@ class MultiAnnotatedDataset(SoundDataset):
                 max_label_len = {k: int(label_lens[k].max()) for k in self.targets}
 
             sounds = [_pad_axis(x, 0, max_sound_len - len(x), axis=0) for x in sounds]
-            sources = [
-                _pad_axis(x, 0, max_source_len - len(x), axis=0) for x in sources
-            ]
+            sources = [_pad_axis(x, 0, max_source_len - len(x), axis=0) for x in sources]
             if not flat_labels:
                 for k in self.targets:
-                    labels[k] = [
-                        _pad_axis(y, 0, max_label_len[k] - len(y), axis=0)
-                        for y in labels[k]
-                    ]
-                    intervals[k] = [
-                        _pad_axis(t, 0, max_label_len[k] - len(t), axis=0)
-                        for t in intervals[k]
-                    ]
+                    labels[k] = [_pad_axis(y, 0, max_label_len[k] - len(y), axis=0) for y in labels[k]]
+                    intervals[k] = [_pad_axis(t, 0, max_label_len[k] - len(t), axis=0) for t in intervals[k]]
 
             sounds = torch.stack(sounds, dim=self.batch_dim)
             sources = torch.stack(sources, dim=self.batch_dim)
@@ -1649,21 +1522,14 @@ class MultiAnnotatedDataset(SoundDataset):
                 labels = {k: torch.cat(labels[k]) for k in self.targets}
                 intervals = {k: torch.cat(intervals[k]) for k in self.targets}
             else:
-                labels = {
-                    k: torch.stack(labels[k], dim=self.batch_dim) for k in self.targets
-                }
-                intervals = {
-                    k: torch.stack(intervals[k], dim=self.batch_dim)
-                    for k in self.targets
-                }
+                labels = {k: torch.stack(labels[k], dim=self.batch_dim) for k in self.targets}
+                intervals = {k: torch.stack(intervals[k], dim=self.batch_dim) for k in self.targets}
             skew = torch.tensor([s.skew for s in samples])
 
             return MultiAnnotatedBatch(
                 sound=(sounds, sound_sr, sound_lens),
                 source=(sources, source_sr, source_lens),
-                label={
-                    k: (labels[k], label_lens[k], intervals[k]) for k in self.targets
-                },
+                label={k: (labels[k], label_lens[k], intervals[k]) for k in self.targets},
                 skew=skew,
                 name=names,
             )
@@ -1698,9 +1564,7 @@ class MultiAnnotatedDataset(SoundDataset):
                 textgrid = textgrid[target_type]
             # drop silence tokens
             textgrid = (
-                [item for item in textgrid if item.text not in ["", "sp", "spn", "sil"]]
-                if ignore_silence
-                else textgrid
+                [item for item in textgrid if item.text not in ["", "sp", "spn", "sil"]] if ignore_silence else textgrid
             )
             # transform to standard labels
             for item in textgrid:
@@ -1709,9 +1573,7 @@ class MultiAnnotatedDataset(SoundDataset):
             target = [item.text for item in textgrid]
             interv = [(item.xmin, item.xmax) for item in textgrid]
         elif fmt == "swc":
-            raise NotImplementedError(
-                "Spoken Wikipedia annotation not yet implemented!"
-            )
+            raise NotImplementedError("Spoken Wikipedia annotation not yet implemented!")
         elif fmt == "tedlium":
             raise NotImplementedError("TED-LIUM r3 annotation not yet implemented!")
         else:
@@ -1726,10 +1588,7 @@ class MultiAnnotatedDataset(SoundDataset):
                 subtokens = normalize_token(token)  # , self.vocabulary)
                 expanded_target += subtokens
                 expanded_interv += [
-                    intv
-                    if not is_subtoken(t)
-                    else (intv[:1] * 2 if is_prefix(t) else intv[1:] * 2)
-                    for t in subtokens
+                    intv if not is_subtoken(t) else (intv[:1] * 2 if is_prefix(t) else intv[1:] * 2) for t in subtokens
                 ]
             target, interv = expanded_target, expanded_interv
 
@@ -1841,15 +1700,11 @@ def _syllabized_textgrid(textgrid, spaced):
         syllbs = syllabize([p.text for p in phones], stressed=True)
         for syll in syllbs:
             nsyll = len(syll.split("-"))
-            syllables.append(
-                textgrids.Interval(syll, phones[0].xmin, phones[nsyll - 1].xmax)
-            )
+            syllables.append(textgrids.Interval(syll, phones[0].xmin, phones[nsyll - 1].xmax))
             phones = phones[nsyll:]
 
         if spaced and len(syllbs) > 0:
-            syllables.append(
-                textgrids.Interval(" ", syllables[-1].xmax, syllables[-1].xmax)
-            )
+            syllables.append(textgrids.Interval(" ", syllables[-1].xmax, syllables[-1].xmax))
 
     return textgrids.Tier(syllables)
 
